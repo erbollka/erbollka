@@ -103,6 +103,24 @@ h2 {
   padding: 22px;
 }
 
+.sticky-panel {
+  align-self: start;
+  position: sticky;
+  top: 18px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.panel-head h2 {
+  margin-bottom: 0;
+}
+
 .form label {
   display: flex;
   flex-direction: column;
@@ -177,6 +195,11 @@ input {
   background: white;
 }
 
+.button.compact {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
 .error {
   margin: 0;
   border-radius: 8px;
@@ -227,6 +250,45 @@ input {
   gap: 12px;
 }
 
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.kpi-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.kpi-item > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.kpi-item span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.bar-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7ecef;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
 .recommendations div,
 .comparison-item {
   border: 1px solid var(--line);
@@ -239,6 +301,98 @@ input {
   display: block;
   margin-top: 4px;
   color: var(--muted);
+}
+
+.management-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f9fbfb;
+}
+
+.management-report p {
+  margin-bottom: 0;
+  line-height: 1.6;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chips span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--muted);
+  background: white;
+  font-size: 13px;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.chat-answer {
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--soft);
+}
+
+.chat-answer span {
+  color: var(--primary-strong);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.chat-answer p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+}
+
+.risk-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.risk-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.risk-card strong,
+.risk-card span {
+  display: block;
+}
+
+.risk-card span {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.roadmap-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.roadmap-mini span {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .table-wrap {
@@ -296,7 +450,17 @@ th {
 
   .metrics,
   .recommendations,
-  .comparison-grid {
+  .comparison-grid,
+  .kpi-grid,
+  .risk-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sticky-panel {
+    position: static;
+  }
+
+  .chat-form {
     grid-template-columns: 1fr;
   }
 }

@@ -13,6 +13,20 @@ export type Finding = {
   evidence: Record<string, unknown>;
 };
 
+export type WorkbookProfile = {
+  quality_score?: number;
+  sheet_count?: number;
+  metric_totals?: Record<string, number>;
+  sheets?: Array<{
+    name: string;
+    rows_sampled: number;
+    columns_sampled: number;
+    non_empty_cells_sampled: number;
+    numeric_columns_sampled: number;
+    metric_totals?: Record<string, number>;
+  }>;
+};
+
 export type AuditReport = {
   id: string;
   file_name: string;
@@ -22,6 +36,7 @@ export type AuditReport = {
   total_findings: number;
   summary: string;
   recommendations: string[];
+  workbook_profile: WorkbookProfile;
   findings: Finding[];
   created_at: string;
 };
@@ -40,6 +55,18 @@ export type ReportComparison = {
   previous_report_id: string | null;
   summary: string;
   metrics: ComparisonMetric[];
+};
+
+export type ManagementReport = {
+  report_id: string;
+  title: string;
+  text: string;
+  highlights: string[];
+};
+
+export type ChatResponse = {
+  answer: string;
+  used_ai: boolean;
 };
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -75,6 +102,26 @@ export async function fetchComparison(reportId: string): Promise<ReportCompariso
   const response = await fetch(`${API_URL}/api/v1/reports/${reportId}/compare`);
   if (!response.ok) {
     return null;
+  }
+  return response.json();
+}
+
+export async function fetchManagementReport(reportId: string): Promise<ManagementReport | null> {
+  const response = await fetch(`${API_URL}/api/v1/reports/${reportId}/management-report`);
+  if (!response.ok) {
+    return null;
+  }
+  return response.json();
+}
+
+export async function askReport(reportId: string, question: string): Promise<ChatResponse> {
+  const response = await fetch(`${API_URL}/api/v1/reports/${reportId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!response.ok) {
+    throw new Error("Не удалось получить ответ по отчету");
   }
   return response.json();
 }

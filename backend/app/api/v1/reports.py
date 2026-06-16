@@ -12,8 +12,16 @@ from sqlalchemy.orm import selectinload
 from app.core.config import get_settings
 from app.db.models import AuditFinding, AuditReport, Severity
 from app.db.session import get_db
-from app.schemas.reports import ComparisonMetricOut, FindingOut, ReportComparisonOut, ReportOut
-from app.services.ai_reviewer import enrich_with_ai
+from app.schemas.reports import (
+    ComparisonMetricOut,
+    FindingOut,
+    ManagementReportOut,
+    ReportChatRequest,
+    ReportChatResponse,
+    ReportComparisonOut,
+    ReportOut,
+)
+from app.services.ai_reviewer import ask_ai_text, enrich_with_ai
 from app.services.excel_analyzer import analyze_workbook
 from app.services.pdf import build_report_pdf
 
@@ -130,6 +138,17 @@ async def compare_with_previous(report_id: uuid.UUID, db: AsyncSession = Depends
             float(sum(1 for item in previous.findings if item.severity.value in {"high", "critical"})),
         ),
     ]
+    current_totals = report.workbook_profile.get("metric_totals", {}) if report.workbook_profile else {}
+    previous_totals = previous.workbook_profile.get("metric_totals", {}) if previous.workbook_profile else {}
+    for metric_name in ("sales", "profit", "salary", "bonus", "expense"):
+        if metric_name in current_totals or metric_name in previous_totals:
+            metrics.append(
+                _comparison_metric(
+                    metric_name,
+                    float(current_totals.get(metric_name) or 0),
+                    float(previous_totals.get(metric_name) or 0),
+                )
+            )
     worse = [item for item in metrics if item.severity in {"medium", "high", "critical"} and item.delta_value > 0]
     summary = (
         "Показатели ухудшились относительно предыдущего месяца. Проверьте новые критичные и высокие риски."
@@ -142,6 +161,47 @@ async def compare_with_previous(report_id: uuid.UUID, db: AsyncSession = Depends
         summary=summary,
         metrics=metrics,
     )
+
+
+@router.get("/{report_id}/management-report", response_model=ManagementReportOut)
+async def management_report(report_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> ManagementReportOut:
+    report = await _load_report(db, report_id)
+    payload = _report_payload(report)
+    ai_text = await ask_ai_text(
+        system=(
+            "Ты финансовый аналитик. Составь короткий отчет для руководства магазина на русском языке. "
+            "Используй только переданные KPI, summary, recommendations и findings. Не придумывай числа."
+        ),
+        user_payload=payload,
+    )
+    highlights = _highlights(report)
+    text = ai_text or _fallback_management_text(report, highlights)
+    return ManagementReportOut(
+        report_id=report.id,
+        title=f"Отчет для руководства: {report.file_name}",
+        text=text,
+        highlights=highlights,
+    )
+
+
+@router.post("/{report_id}/chat", response_model=ReportChatResponse)
+async def chat_with_report(
+    report_id: uuid.UUID,
+    request: ReportChatRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ReportChatResponse:
+    report = await _load_report(db, report_id)
+    payload = _report_payload(report)
+    ai_text = await ask_ai_text(
+        system=(
+            "Ты AI-аудитор отчета розничного магазина. Отвечай на вопрос пользователя на русском языке "
+            "только по данным отчета. Если данных не хватает, прямо скажи, что в загруженном файле этого не видно."
+        ),
+        user_payload={**payload, "question": request.question},
+    )
+    if ai_text:
+        return ReportChatResponse(answer=ai_text, used_ai=True)
+    return ReportChatResponse(answer=_fallback_chat_answer(report, request.question), used_ai=False)
 
 
 @router.get("/{report_id}/pdf")
@@ -186,6 +246,77 @@ def _comparison_metric(metric_name: str, current: float, previous: float) -> Com
     )
 
 
+def _report_payload(report: AuditReport) -> dict:
+    return {
+        "file_name": report.file_name,
+        "risk_score": report.risk_score,
+        "risk_level": report.risk_level,
+        "summary": report.summary,
+        "recommendations": report.recommendations,
+        "workbook_profile": report.workbook_profile,
+        "findings": [
+            {
+                "code": item.code,
+                "severity": item.severity.value,
+                "sheet": item.sheet_name,
+                "cell": item.cell,
+                "row_number": item.row_number,
+                "title": item.title,
+                "description": item.description,
+                "suggested_fix": item.suggested_fix,
+                "evidence": item.evidence,
+            }
+            for item in report.findings[:80]
+        ],
+    }
+
+
+def _highlights(report: AuditReport) -> list[str]:
+    totals = report.workbook_profile.get("metric_totals", {}) if report.workbook_profile else {}
+    highlights = [
+        f"Оценка качества отчета: {report.workbook_profile.get('quality_score', max(0, 100 - report.risk_score))}/100.",
+        f"Найдено замечаний: {len(report.findings)}.",
+    ]
+    for label, key in (
+        ("Продажи", "sales"),
+        ("Прибыль", "profit"),
+        ("Зарплаты", "salary"),
+        ("Премии", "bonus"),
+        ("Расходы", "expense"),
+    ):
+        value = totals.get(key)
+        if value:
+            highlights.append(f"{label}: {value:,.0f}.")
+    return highlights[:6]
+
+
+def _fallback_management_text(report: AuditReport, highlights: list[str]) -> str:
+    top_findings = sorted(report.findings, key=lambda item: {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(item.severity.value, 5))[:5]
+    issues = " ".join(f"{item.title}: {item.description}" for item in top_findings)
+    return (
+        f"Автоматический аудит отчета «{report.file_name}» завершен. {report.summary} "
+        f"Ключевые показатели: {' '.join(highlights)} "
+        f"Главные замечания: {issues or 'существенных проблем не найдено'}"
+    )
+
+
+def _fallback_chat_answer(report: AuditReport, question: str) -> str:
+    normalized = question.lower()
+    totals = report.workbook_profile.get("metric_totals", {}) if report.workbook_profile else {}
+    if "приб" in normalized:
+        value = totals.get("profit")
+        return f"В отчете показатель прибыли: {value}. Если прибыль снизилась, загрузите предыдущий месяц для сравнения." if value else "В загруженном отчете не найден отдельный показатель прибыли."
+    if "прем" in normalized:
+        bonus_findings = [item for item in report.findings if "BONUS" in item.code]
+        return "По премиям найдено: " + "; ".join(item.description for item in bonus_findings[:5]) if bonus_findings else "Критичных замечаний по премиям не найдено."
+    if "расход" in normalized:
+        return f"Расходы в профиле отчета: {totals.get('expense', 0)}. Рекомендации: {' '.join(report.recommendations)}"
+    if "подозр" in normalized or "мошен" in normalized:
+        suspicious = [item for item in report.findings if item.code in {"SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"}]
+        return "Подозрительные операции: " + "; ".join(item.description for item in suspicious[:6]) if suspicious else "Подозрительных операций по текущим правилам не найдено."
+    return f"{report.summary} Главные рекомендации: {' '.join(report.recommendations)}"
+
+
 def _report_out(report: AuditReport) -> ReportOut:
     return ReportOut(
         id=report.id,
@@ -196,6 +327,7 @@ def _report_out(report: AuditReport) -> ReportOut:
         total_findings=len(report.findings),
         summary=report.summary,
         recommendations=report.recommendations,
+        workbook_profile=report.workbook_profile,
         created_at=report.created_at,
         findings=[
             FindingOut(

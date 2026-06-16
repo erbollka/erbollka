@@ -14,6 +14,15 @@ from openpyxl.utils import get_column_letter
 TOTAL_PATTERNS = ("total", "итого", "сумма", "всего")
 NEGATIVE_FORBIDDEN_PATTERNS = ("sale", "продаж", "salary", "зарп", "bonus", "прем", "остат", "expense", "расход")
 REQUIRED_PATTERNS = ("date", "дата", "employee", "сотруд", "sales", "продаж", "salary", "зарп", "total", "итого")
+METRIC_PATTERNS = {
+    "sales": ("sale", "revenue", "выруч", "продаж"),
+    "salary": ("salary", "payroll", "зарп", "оклад", "фот"),
+    "bonus": ("bonus", "прем"),
+    "expense": ("expense", "расход", "затрат"),
+    "profit": ("profit", "приб", "марж"),
+    "discount": ("discount", "скид"),
+    "return": ("return", "refund", "возврат"),
+}
 
 
 @dataclass
@@ -65,16 +74,20 @@ def analyze_workbook(path: Path) -> WorkbookAudit:
         findings.extend(_find_negative_values(sheet_name, ws_values))
         findings.extend(_find_outliers(path, sheet_name))
         findings.extend(_find_total_mismatches(sheet_name, ws_values))
+        findings.extend(_find_business_logic_issues(path, sheet_name))
 
+    findings.extend(_find_workbook_business_issues(workbook_profile))
     risk_score = _risk_score(findings)
     risk_level = _risk_level(risk_score)
+    quality_score = max(0, 100 - risk_score)
+    workbook_profile["quality_score"] = quality_score
     return WorkbookAudit(
         file_sha256=sha256_file(path),
         workbook_profile=workbook_profile,
         findings=findings,
         risk_score=risk_score,
         risk_level=risk_level,
-        summary=_summary(findings, risk_level),
+        summary=_summary(findings, risk_level, quality_score),
         recommendations=_recommendations(findings),
     )
 
@@ -82,9 +95,14 @@ def analyze_workbook(path: Path) -> WorkbookAudit:
 def _profile_workbook(path: Path) -> dict[str, Any]:
     excel = pd.ExcelFile(path)
     sheets = []
+    totals = {key: 0.0 for key in METRIC_PATTERNS}
     for sheet_name in excel.sheet_names:
         frame = excel.parse(sheet_name=sheet_name, header=None, nrows=80)
+        parsed = excel.parse(sheet_name=sheet_name)
         numeric_frame = frame.select_dtypes(include=[np.number])
+        sheet_totals = _metric_totals(parsed)
+        for key, value in sheet_totals.items():
+            totals[key] += value
         sheets.append(
             {
                 "name": sheet_name,
@@ -92,9 +110,23 @@ def _profile_workbook(path: Path) -> dict[str, Any]:
                 "columns_sampled": int(frame.shape[1]),
                 "non_empty_cells_sampled": int(frame.notna().sum().sum()),
                 "numeric_columns_sampled": int(numeric_frame.shape[1]),
+                "metric_totals": sheet_totals,
             }
         )
-    return {"sheet_count": len(sheets), "sheets": sheets}
+    return {"sheet_count": len(sheets), "sheets": sheets, "metric_totals": {k: round(v, 2) for k, v in totals.items()}}
+
+
+def _metric_totals(frame: pd.DataFrame) -> dict[str, float]:
+    totals = {key: 0.0 for key in METRIC_PATTERNS}
+    for column in frame.columns:
+        normalized = str(column).lower()
+        series = pd.to_numeric(frame[column], errors="coerce").dropna()
+        if series.empty:
+            continue
+        for metric, patterns in METRIC_PATTERNS.items():
+            if any(pattern in normalized for pattern in patterns):
+                totals[metric] += float(series.sum())
+    return {key: round(value, 2) for key, value in totals.items()}
 
 
 def _find_formula_issues(sheet_name: str, ws_formula: Any, ws_values: Any) -> list[Finding]:
@@ -194,20 +226,18 @@ def _find_duplicate_rows(path: Path, sheet_name: str) -> list[Finding]:
     if frame.empty:
         return []
     duplicated = frame.duplicated(keep=False)
-    findings: list[Finding] = []
-    for index in frame[duplicated].index[:20]:
-        findings.append(
-            Finding(
-                code="DUPLICATE_ROW",
-                severity="low",
-                sheet_name=sheet_name,
-                row_number=int(index) + 2,
-                title="Дубликат строки",
-                description=f"Строка {int(index) + 2} полностью совпадает с другой строкой на листе.",
-                suggested_fix="Проверьте, не была ли строка случайно скопирована дважды.",
-            )
+    return [
+        Finding(
+            code="DUPLICATE_ROW",
+            severity="low",
+            sheet_name=sheet_name,
+            row_number=int(index) + 2,
+            title="Дубликат строки",
+            description=f"Строка {int(index) + 2} полностью совпадает с другой строкой на листе.",
+            suggested_fix="Проверьте, не была ли строка случайно скопирована дважды.",
         )
-    return findings
+        for index in frame[duplicated].index[:20]
+    ]
 
 
 def _find_negative_values(sheet_name: str, ws_values: Any) -> list[Finding]:
@@ -297,10 +327,122 @@ def _find_total_mismatches(sheet_name: str, ws_values: Any) -> list[Finding]:
                             title="Итог не сходится",
                             description=f"Итог {expected} не совпадает с суммой строк выше {calculated}.",
                             suggested_fix="Проверьте диапазон формулы и строки, которые входят в итог.",
-                            evidence={"expected": expected, "calculated": calculated},
+                            evidence={"expected": expected, "calculated": calculated, "difference": round(expected - calculated, 2)},
                         )
                     )
     return findings[:30]
+
+
+def _find_business_logic_issues(path: Path, sheet_name: str) -> list[Finding]:
+    frame = pd.read_excel(path, sheet_name=sheet_name)
+    if frame.empty:
+        return []
+    findings: list[Finding] = []
+    columns = {str(column).lower(): column for column in frame.columns}
+    salary_col = _find_column(columns, METRIC_PATTERNS["salary"])
+    bonus_col = _find_column(columns, METRIC_PATTERNS["bonus"])
+    discount_col = _find_column(columns, METRIC_PATTERNS["discount"])
+    return_col = _find_column(columns, METRIC_PATTERNS["return"])
+    date_col = _find_column(columns, ("date", "дата"))
+
+    if salary_col is not None and bonus_col is not None:
+        salary = pd.to_numeric(frame[salary_col], errors="coerce")
+        bonus = pd.to_numeric(frame[bonus_col], errors="coerce")
+        for index, (salary_value, bonus_value) in enumerate(zip(salary, bonus), start=2):
+            if pd.notna(salary_value) and pd.notna(bonus_value) and salary_value > 0 and bonus_value > salary_value * 0.5:
+                findings.append(
+                    Finding(
+                        code="BONUS_LIMIT_EXCEEDED",
+                        severity="high",
+                        sheet_name=sheet_name,
+                        row_number=index,
+                        column_name=str(bonus_col),
+                        title="Премия выше лимита",
+                        description=f"Премия {bonus_value:.2f} превышает 50% зарплаты {salary_value:.2f}.",
+                        suggested_fix="Проверьте основание премии и согласование с бухгалтерией.",
+                        evidence={"salary": float(salary_value), "bonus": float(bonus_value), "limit_ratio": 0.5},
+                    )
+                )
+
+    if discount_col is not None:
+        discounts = pd.to_numeric(frame[discount_col], errors="coerce")
+        for index, value in discounts.dropna().items():
+            if value > 50:
+                findings.append(
+                    Finding(
+                        code="SUSPICIOUS_DISCOUNT",
+                        severity="medium",
+                        sheet_name=sheet_name,
+                        row_number=int(index) + 2,
+                        column_name=str(discount_col),
+                        title="Подозрительно большая скидка",
+                        description=f"Скидка {value:.2f} выглядит выше обычного лимита.",
+                        suggested_fix="Проверьте разрешение на скидку и соответствие акции.",
+                        evidence={"discount": float(value)},
+                    )
+                )
+
+    if return_col is not None and date_col is not None:
+        dates = pd.to_datetime(frame[date_col], errors="coerce")
+        returns = pd.to_numeric(frame[return_col], errors="coerce").abs()
+        return_median = float(returns.dropna().median()) if returns.notna().any() else 0.0
+        for index, (date_value, return_value) in enumerate(zip(dates, returns), start=2):
+            if pd.notna(date_value) and pd.notna(return_value) and date_value.day >= 25 and return_value > max(return_median * 2, 1):
+                findings.append(
+                    Finding(
+                        code="MONTH_END_RETURN_SPIKE",
+                        severity="high",
+                        sheet_name=sheet_name,
+                        row_number=index,
+                        column_name=str(return_col),
+                        title="Возврат перед закрытием месяца",
+                        description=f"Крупный возврат {return_value:.2f} найден в конце месяца.",
+                        suggested_fix="Проверьте чек возврата и причину операции перед закрытием отчетности.",
+                        evidence={"return": float(return_value), "day": int(date_value.day)},
+                    )
+                )
+    return findings[:40]
+
+
+def _find_workbook_business_issues(profile: dict[str, Any]) -> list[Finding]:
+    totals = profile.get("metric_totals", {})
+    sales = float(totals.get("sales") or 0)
+    salary = float(totals.get("salary") or 0)
+    bonus = float(totals.get("bonus") or 0)
+    expense = float(totals.get("expense") or 0)
+    findings: list[Finding] = []
+    if sales > 0 and (salary + bonus) / sales > 0.35:
+        findings.append(
+            Finding(
+                code="PAYROLL_SHARE_HIGH",
+                severity="high",
+                sheet_name="Workbook",
+                title="Расходы на персонал выше нормы",
+                description="Фонд оплаты труда и премии превышают 35% от продаж.",
+                suggested_fix="Проверьте начисления сотрудникам и сравните показатель с плановой нормой магазина.",
+                evidence={"sales": sales, "salary": salary, "bonus": bonus, "ratio": round((salary + bonus) / sales, 3)},
+            )
+        )
+    if sales > 0 and expense / sales > 0.25:
+        findings.append(
+            Finding(
+                code="EXPENSE_SHARE_HIGH",
+                severity="medium",
+                sheet_name="Workbook",
+                title="Расходы выше нормы",
+                description="Расходы превышают 25% от продаж.",
+                suggested_fix="Разбейте расходы по категориям и проверьте резкий рост аренды, персонала или закупок.",
+                evidence={"sales": sales, "expense": expense, "ratio": round(expense / sales, 3)},
+            )
+        )
+    return findings
+
+
+def _find_column(columns: dict[str, Any], patterns: tuple[str, ...]) -> Any | None:
+    for normalized, original in columns.items():
+        if any(pattern in normalized for pattern in patterns):
+            return original
+    return None
 
 
 def _risk_score(findings: list[Finding]) -> int:
@@ -318,12 +460,16 @@ def _risk_level(score: int) -> str:
     return "low"
 
 
-def _summary(findings: list[Finding], risk_level: str) -> str:
+def _summary(findings: list[Finding], risk_level: str, quality_score: int) -> str:
     if not findings:
-        return "Критичных ошибок не найдено. Отчет выглядит согласованным по базовым проверкам."
+        return f"Критичных ошибок не найдено. Оценка качества отчета: {quality_score}/100."
     critical = sum(1 for item in findings if item.severity == "critical")
     high = sum(1 for item in findings if item.severity == "high")
-    return f"Найдено {len(findings)} замечаний. Критичных: {critical}, высокого риска: {high}. Уровень риска: {risk_level}."
+    fraud = sum(1 for item in findings if item.code in {"SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED"})
+    return (
+        f"Найдено {len(findings)} замечаний. Критичных: {critical}, высокого риска: {high}, "
+        f"fraud-сигналов: {fraud}. Уровень риска: {risk_level}. Оценка качества отчета: {quality_score}/100."
+    )
 
 
 def _recommendations(findings: list[Finding]) -> list[str]:
@@ -333,12 +479,14 @@ def _recommendations(findings: list[Finding]) -> list[str]:
     recommendations = []
     if "TOTAL_MISMATCH" in codes:
         recommendations.append("Сначала исправьте итоговые строки: они влияют на зарплаты, премии и финансовый результат.")
-    if "NEGATIVE_VALUE" in codes:
-        recommendations.append("Проверьте отрицательные значения и отделите реальные возвраты от ошибок ввода.")
+    if "BONUS_LIMIT_EXCEEDED" in codes:
+        recommendations.append("Проверьте премии выше лимита и запросите основание начисления.")
+    if "PAYROLL_SHARE_HIGH" in codes:
+        recommendations.append("Сверьте фонд оплаты труда с плановой нормой и прошлым месяцем.")
+    if "MONTH_END_RETURN_SPIKE" in codes or "SUSPICIOUS_DISCOUNT" in codes:
+        recommendations.append("Проверьте подозрительные скидки и возвраты перед закрытием месяца.")
     if "REQUIRED_CELL_EMPTY" in codes:
         recommendations.append("Заполните обязательные поля, чтобы бухгалтерия могла сверить строки без ручных уточнений.")
     if "NUMERIC_OUTLIER" in codes:
         recommendations.append("Сверьте аномальные суммы с POS-системой и первичными документами.")
-    if "FORMULA_NO_CACHED_VALUE" in codes or "FORMULA_SUSPICIOUS_SUM_RANGE" in codes:
-        recommendations.append("Пересчитайте книгу в Excel и проверьте диапазоны формул перед финальной отправкой.")
-    return recommendations[:5]
+    return recommendations[:6]
