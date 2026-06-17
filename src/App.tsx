@@ -163,8 +163,14 @@ export default function App() {
 
   async function askGemini(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!report || !question.trim()) return;
-    const localAnswer = buildLocalReportAnswer(report, question.trim());
+    if (!question.trim()) return;
+    const localAnswer = report
+      ? buildLocalReportAnswer(report, question.trim())
+      : {
+          used_ai: false,
+          answer:
+            "Gemini сейчас получит вопрос без загруженного документа. Для точного ответа по цифрам загрузите отчет, а пока я могу отвечать как retail-помощник по KPI, продажам, аудиту и документам.",
+        };
     setChatAnswer(localAnswer);
     setIsChatLoading(true);
 
@@ -175,7 +181,9 @@ export default function App() {
           body: {
             system:
               "Ты Gemini AI-аудитор и помощник владельца fashion retail. Отвечай по-русски, коротко и по делу. Используй только переданные данные документа, KPI и findings. Не придумывай числа.",
-            prompt: buildGeminiReportPrompt(report, question.trim()),
+            prompt: report
+              ? buildGeminiReportPrompt(report, question.trim())
+              : `Ответь владельцу магазина одежды на вопрос. Если для точного ответа нужен файл или цифры, прямо скажи, какие документы загрузить. Вопрос: ${question.trim()}`,
           },
         }),
         10000,
@@ -407,7 +415,7 @@ function AuditsPage({
         <h2>Gemini-чат по документу</h2>
         <form className="chat-form" onSubmit={askGemini}>
           <input value={question} onChange={(event) => setQuestion(event.target.value)} />
-          <button className="button compact" disabled={!report || isChatLoading}>
+          <button className="button compact" disabled={isChatLoading || !question.trim()}>
             {isChatLoading ? "Gemini думает..." : "Спросить"}
           </button>
         </form>
