@@ -77,10 +77,16 @@ export async function uploadAudit(file: File, storeId: string, periodMonth: stri
   data.append("store_id", storeId);
   data.append("period_month", periodMonth);
 
-  const response = await fetch(`${API_URL}/api/v1/reports/upload`, {
-    method: "POST",
-    body: data,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/v1/reports/upload`, {
+      method: "POST",
+      body: data,
+    });
+  } catch {
+    const { analyzeExcelInBrowser } = await import("./clientAudit");
+    return analyzeExcelInBrowser(file);
+  }
 
   if (!response.ok) {
     const message = await response.text();

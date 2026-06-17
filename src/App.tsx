@@ -2,8 +2,10 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AuditReport,
   ChatResponse,
+  Finding,
   ManagementReport,
   ReportComparison,
+  Severity,
   askReport,
   fetchComparison,
   fetchHistory,
@@ -11,6 +13,9 @@ import {
   pdfUrl,
   uploadAudit,
 } from "./lib/api";
+import { BrandLogo } from "./components/BrandLogo";
+import { FashionAssistant } from "./components/FashionAssistant";
+import { demoComparison, demoManagementReport, demoReport } from "./lib/demoReport";
 import "./index.css";
 
 const severityLabel = {
@@ -52,6 +57,7 @@ export default function App() {
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isDemoReport = report?.id === demoReport.id;
 
   useEffect(() => {
     fetchHistory().then(setHistory).catch(() => setHistory([]));
@@ -62,6 +68,10 @@ export default function App() {
       setComparison(null);
       setManagementReport(null);
       setChatAnswer(null);
+      return;
+    }
+    if (report.id === demoReport.id) {
+      setComparison(demoComparison);
       return;
     }
     fetchComparison(report.id).then(setComparison).catch(() => setComparison(null));
@@ -96,6 +106,8 @@ export default function App() {
       const result = await uploadAudit(file, storeId, periodMonth);
       setReport(result);
       setHistory((items) => [result, ...items.filter((item) => item.id !== result.id)]);
+      setManagementReport(null);
+      setChatAnswer(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка проверки");
     } finally {
@@ -103,11 +115,31 @@ export default function App() {
     }
   }
 
+  function openDemoReport() {
+    setError(null);
+    setFile(null);
+    setReport(demoReport);
+    setComparison(demoComparison);
+    setManagementReport(demoManagementReport);
+    setChatAnswer({
+      used_ai: false,
+      answer:
+        "В демо-отчете риск вырос из-за расхождения итоговой строки, премии выше лимита, крупной скидки и возврата перед закрытием месяца.",
+    });
+    setHistory((items) => [demoReport, ...items.filter((item) => item.id !== demoReport.id)]);
+  }
+
   async function createManagementReport() {
     if (!report) return;
+    if (isDemoReport) {
+      setManagementReport(demoManagementReport);
+      return;
+    }
     setIsReportLoading(true);
     try {
-      setManagementReport(await fetchManagementReport(report.id));
+      setManagementReport((await fetchManagementReport(report.id)) ?? buildLocalManagementReport(report));
+    } catch {
+      setManagementReport(buildLocalManagementReport(report));
     } finally {
       setIsReportLoading(false);
     }
@@ -116,9 +148,20 @@ export default function App() {
   async function askQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!report || !question.trim()) return;
+    if (isDemoReport) {
+      setChatAnswer({
+        used_ai: false,
+        answer:
+          "Это демо-ответ: в отчете заметны три главные причины риска — неверный итог продаж, премия выше лимита и подозрительные операции со скидками/возвратами.",
+      });
+      return;
+    }
     setIsChatLoading(true);
+    setChatAnswer(buildLocalReportAnswer(report, question.trim()));
     try {
-      setChatAnswer(await askReport(report.id, question.trim()));
+      setChatAnswer(await withTimeout(askReport(report.id, question.trim()), 8000));
+    } catch {
+      // The local report answer is already shown. Backend AI is optional.
     } finally {
       setIsChatLoading(false);
     }
@@ -128,23 +171,28 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Режим: “Проведи аудит отчета”</p>
-          <h1>Retail Report AI</h1>
+          <BrandLogo />
+          <p className="eyebrow">Fashion retail workspace</p>
+          <h1>Fashion Retail AI Assistant</h1>
           <p className="subtitle">
-            AI-аудитор Excel-отчетов для магазинов: формулы, пустые ячейки, дубли, итоговые суммы, бизнес-логика,
-            fraud-сигналы, сравнение месяцев и готовый отчет для руководства.
+            Личный AI-помощник для магазина одежды: еженедельные KPI, продажи, выручка, скидки, возвраты,
+            идеи для команды, витрины, ассортимента и планерок.
           </p>
         </div>
         {report ? (
-          <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
-            Скачать PDF
-          </a>
+          isDemoReport ? (
+            <span className="demo-badge">Демо-отчет</span>
+          ) : (
+            <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
+              Скачать PDF
+            </a>
+          )
         ) : null}
       </header>
 
       <section className="layout">
         <aside className="panel sticky-panel">
-          <h2>Загрузка Excel</h2>
+          <h2>Данные магазина</h2>
           <form className="form" onSubmit={onSubmit}>
             <label>
               Магазин
@@ -164,20 +212,44 @@ export default function App() {
               />
             </label>
             {error ? <p className="error">{error}</p> : null}
-            <button className="button" disabled={isLoading}>
-              {isLoading ? "Проводим аудит..." : "Провести аудит отчета"}
-            </button>
+            <div className="button-row">
+              <button className="button" disabled={isLoading}>
+                {isLoading ? "Обновляем данные..." : "Загрузить отчет"}
+              </button>
+              <button className="button secondary" type="button" onClick={openDemoReport}>
+                Демо-магазин
+              </button>
+            </div>
           </form>
 
           <div className="roadmap-mini">
-            <strong>Следующие модули SaaS</strong>
-            <span>PDF и фото документов</span>
-            <span>Голосовой помощник</span>
-            <span>Сравнение 10-100 магазинов</span>
+            <strong>Fashion assistant modules</strong>
+            <span>Еженедельные KPI команды</span>
+            <span>Идеи для витрины и капсул</span>
+            <span>Анализ скидок, возвратов и выручки</span>
           </div>
         </aside>
 
         <section className="content">
+          <section className="assistant-hero">
+            <div>
+              <p className="eyebrow">AI co-pilot for store teams</p>
+              <h2>Обсуждайте продажи, тренды и действия на неделю в одном месте</h2>
+              <p>
+                Ассистент использует KPI магазина и отчетность, чтобы помочь команде придумать план продаж,
+                улучшить мерчандайзинг, подготовить планерку и найти идеи для fashion retail.
+              </p>
+            </div>
+            <div className="hero-actions">
+              <button className="button" type="button" onClick={openDemoReport}>
+                Открыть демо-магазин
+              </button>
+              <span>Работает через Supabase AI Function, с fallback-ответом без ключа.</span>
+            </div>
+          </section>
+
+          <FashionAssistant report={report} />
+
           <div className="metrics">
             <Metric title="Качество" value={`${qualityScore}/100`} />
             <Metric title="Ошибки" value={report?.total_findings ?? 0} />
@@ -199,6 +271,11 @@ export default function App() {
             <h2>Итог аудита</h2>
             {report ? (
               <div className="stack">
+                {isDemoReport ? (
+                  <div className="demo-note">
+                    Это демонстрационный отчет: он показывает, как будет выглядеть результат без загрузки Excel.
+                  </div>
+                ) : null}
                 <div className="summary-box">
                   <strong>{report.file_name}</strong>
                   <p>{report.summary}</p>
@@ -375,7 +452,195 @@ function maxKpi(totals: Record<string, number>) {
 }
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(value);
+  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(value)} ₸`;
+}
+
+function buildLocalManagementReport(report: AuditReport): ManagementReport {
+  const totals = report.workbook_profile?.metric_totals ?? {};
+  const highRisk = report.findings.filter((item) => ["high", "critical"].includes(item.severity)).length;
+  const fraudSignals = report.findings.filter((item) =>
+    ["SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"].includes(item.code),
+  ).length;
+  const topFindings = prioritizeFindings(report.findings).slice(0, 3);
+
+  return {
+    report_id: report.id,
+    title: `Отчет для руководства: ${report.file_name}`,
+    text: [
+      `Проверка завершена. Общий риск: ${riskLabel[report.risk_level] ?? report.risk_level}, качество отчета: ${
+        report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)
+      }/100.`,
+      `Найдено замечаний: ${report.total_findings}, из них высокого/критического риска: ${highRisk}. Fraud-сигналов: ${fraudSignals}.`,
+      report.summary,
+      topFindings.length
+        ? `Главные зоны внимания: ${topFindings.map((item) => `${item.title} (${item.sheet_name}${item.cell ? `, ${item.cell}` : ""})`).join("; ")}.`
+        : "Критичных зон внимания по текущим правилам не найдено.",
+      `Главное действие: ${report.recommendations[0] ?? "сверить ключевые показатели и повторить проверку после исправлений."}`,
+    ].join(" "),
+    highlights: [
+      `Продажи: ${formatMoney(Number(totals.sales ?? 0))}`,
+      `Прибыль: ${formatMoney(Number(totals.profit ?? 0))}`,
+      `Скидки: ${formatMoney(Number(totals.discount ?? 0))}`,
+      `Возвраты: ${formatMoney(Number(totals.return ?? 0))}`,
+    ],
+  };
+}
+
+function buildLocalReportAnswer(report: AuditReport, question: string): ChatResponse {
+  const totals = report.workbook_profile?.metric_totals ?? {};
+  const lowerQuestion = question.toLowerCase();
+  const topFindings = prioritizeFindings(report.findings);
+  const sales = Number(totals.sales ?? 0);
+  const profit = Number(totals.profit ?? 0);
+  const expense = Number(totals.expense ?? 0);
+  const discount = Number(totals.discount ?? 0);
+  const returns = Number(totals.return ?? 0);
+  const discountShare = percentOf(discount, sales);
+  const returnsShare = percentOf(returns, sales);
+  const profitShare = percentOf(profit, sales);
+
+  if (lowerQuestion.includes("приб") || lowerQuestion.includes("profit")) {
+    return {
+      used_ai: false,
+      answer: [
+        `По отчету прибыль сейчас ${formatMoney(profit)} (${profitShare}% от продаж).`,
+        `Что может влиять: расходы ${formatMoney(expense)}, скидки ${formatMoney(discount)} (${discountShare}%), возвраты ${formatMoney(returns)} (${returnsShare}%).`,
+        "План проверки: сначала сверьте итоговые формулы, затем крупные скидки/возвраты, затем расходы и премии.",
+        topFindings[0] ? `Самый важный риск в файле: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  }
+
+  if (lowerQuestion.includes("скид") || lowerQuestion.includes("возврат")) {
+    return {
+      used_ai: false,
+      answer: [
+        `Скидки: ${formatMoney(discount)} (${discountShare}% от продаж), возвраты: ${formatMoney(returns)} (${returnsShare}% от продаж).`,
+        "Проверьте три вещи: кто разрешил скидку, есть ли основание в акции/чеке, не попали ли возвраты в конец периода.",
+        "Для команды: сначала продавать образ и ценность комплекта, а скидку использовать только как последний аргумент.",
+      ].join(" "),
+    };
+  }
+
+  if (lowerQuestion.includes("продаж") || lowerQuestion.includes("выруч")) {
+    return {
+      used_ai: false,
+      answer: [
+        `Продажи по отчету: ${formatMoney(sales)}.`,
+        `Для роста на ближайшую неделю: выберите товар недели, соберите 2-3 готовых комплекта и отслеживайте средний чек через допродажи.`,
+        `Следите, чтобы рост не съедался скидками (${discountShare}%) и возвратами (${returnsShare}%).`,
+      ].join(" "),
+    };
+  }
+
+  if (
+    lowerQuestion.includes("ассортимент") ||
+    lowerQuestion.includes("товар") ||
+    lowerQuestion.includes("витрин") ||
+    lowerQuestion.includes("сервис") ||
+    lowerQuestion.includes("команд")
+  ) {
+    return {
+      used_ai: false,
+      answer: [
+        "По загруженному отчету я вижу финансовую часть и риски, поэтому связываю советы с цифрами.",
+        `Продажи: ${formatMoney(sales)}, прибыль: ${formatMoney(profit)}, скидки: ${formatMoney(discount)} (${discountShare}%), возвраты: ${formatMoney(returns)} (${returnsShare}%).`,
+        "Что сделать: выделить товар недели, собрать 2-3 готовых комплекта, дать продавцам короткий сценарий под поводы клиента: работа, семья, выходной, подарок.",
+        "Что проверить в файле: какие категории дают продажи без скидки, где возвраты выше обычного, какие товары продаются только со скидкой.",
+        topFindings[0] ? `Риск, который нельзя игнорировать: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  }
+
+  if (lowerQuestion.includes("риск") || lowerQuestion.includes("ошиб") || lowerQuestion.includes("аудит")) {
+    return {
+      used_ai: false,
+      answer: [
+        `Уровень риска: ${riskLabel[report.risk_level] ?? report.risk_level}, замечаний: ${report.total_findings}.`,
+        topFindings.length
+          ? `Приоритет исправлений: ${topFindings.map((item, index) => `${index + 1}. ${item.title} - ${item.suggested_fix}`).join(" ")}`
+          : "Серьезных замечаний не найдено.",
+        "После исправлений загрузите файл повторно и сравните качество отчета.",
+      ].join(" "),
+    };
+  }
+
+  return {
+    used_ai: false,
+    answer: [
+      `Я отвечаю не по шаблону, а по загруженному отчету и вашему вопросу: “${question}”. В файле найдено ${report.total_findings} замечаний, уровень риска - ${
+        riskLabel[report.risk_level] ?? report.risk_level
+      }.`,
+      buildQuestionSpecificAdvice(lowerQuestion, {
+        sales,
+        profit,
+        expense,
+        discount,
+        returns,
+        discountShare,
+        returnsShare,
+        profitShare,
+      }),
+      topFindings[0] ? `Первое, что стоит проверить в аудите: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : report.summary,
+      report.recommendations[0] ? `Рекомендация: ${report.recommendations[0]}` : "",
+      `Ключевые цифры: продажи ${formatMoney(sales)}, прибыль ${formatMoney(profit)}, скидки ${formatMoney(discount)}, возвраты ${formatMoney(returns)}.`,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
+function prioritizeFindings(findings: Finding[]) {
+  const weight: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  return [...findings].sort((a, b) => weight[a.severity] - weight[b.severity]);
+}
+
+function percentOf(value: number, total: number) {
+  return total > 0 ? Math.round((value / total) * 100) : 0;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error("Request timed out")), timeoutMs);
+    }),
+  ]);
+}
+
+function buildQuestionSpecificAdvice(
+  question: string,
+  metrics: {
+    sales: number;
+    profit: number;
+    expense: number;
+    discount: number;
+    returns: number;
+    discountShare: number;
+    returnsShare: number;
+    profitShare: number;
+  },
+) {
+  if (question.includes("почему") || question.includes("причин") || question.includes("упал") || question.includes("сниз")) {
+    return `Ищите причину по цепочке: продажи ${formatMoney(metrics.sales)}, прибыль ${metrics.profitShare}%, расходы ${formatMoney(metrics.expense)}, скидки ${metrics.discountShare}%, возвраты ${metrics.returnsShare}%. Если скидки или возвраты растут быстрее продаж, проблема может быть не в спросе, а в качестве продаж и контроле операций.`;
+  }
+  if (question.includes("что делать") || question.includes("как") || question.includes("улучш") || question.includes("поднять")) {
+    return "Практичный план: выберите один KPI на неделю, назначьте товар/комплект недели, дайте продавцам короткий скрипт под клиентский повод и каждый вечер сверяйте результат с продажами, скидками и возвратами.";
+  }
+  if (question.includes("клиент") || question.includes("сервис") || question.includes("возраж") || question.includes("дорого")) {
+    return "По сервису: продавцу нужно начинать не с цены, а с повода клиента. Работа, семья, выходной, подарок, поездка - под каждый повод можно собрать образ и только потом обсуждать цену или альтернативу.";
+  }
+  if (question.includes("ассортимент") || question.includes("размер") || question.includes("товар") || question.includes("закуп")) {
+    return "По ассортименту: проверьте, какие товары меряют, но не покупают; какие продаются только со скидкой; каких размеров не хватает; какие вещи не имеют пары для готового образа.";
+  }
+  if (question.includes("соц") || question.includes("instagram") || question.includes("инст") || question.includes("контент")) {
+    return "Для контента лучше показывать не отдельную вещь, а жизненный сценарий: семейный выход, офисная неделя, подарок, вечер. Это поддерживает продажи без постоянной скидки.";
+  }
+  return "Я бы проверила вопрос через три линзы: деньги, клиент, команда. Деньги - что происходит с прибылью, скидками и возвратами. Клиент - какой повод закрывает товар. Команда - может ли продавец объяснить предложение просто и тепло.";
 }
 
 function metricName(name: string) {
