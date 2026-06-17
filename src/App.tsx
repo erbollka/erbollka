@@ -541,7 +541,7 @@ function maxKpi(totals: Record<string, number>) {
 }
 
 function formatMoney(value: number) {
-  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(value)} ₽`;
+  return `${new Intl.NumberFormat("kk-KZ", { maximumFractionDigits: 0 }).format(value)} ₸`;
 }
 
 function formatNumber(value: number) {
