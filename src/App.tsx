@@ -3,18 +3,15 @@ import {
   AuditReport,
   ChatResponse,
   Finding,
-  ManagementReport,
   ReportComparison,
   Severity,
   fetchComparison,
   fetchHistory,
-  fetchManagementReport,
   pdfUrl,
   uploadAudit,
 } from "./lib/api";
 import { BrandLogo } from "./components/BrandLogo";
-import { FashionAssistant } from "./components/FashionAssistant";
-import { demoComparison, demoManagementReport, demoReport } from "./lib/demoReport";
+import { demoComparison, demoReport } from "./lib/demoReport";
 import "./index.css";
 
 type Page = "kpi" | "audits" | "stats";
@@ -73,12 +70,10 @@ export default function App() {
   const [periodMonth, setPeriodMonth] = useState("2026-06");
   const [report, setReport] = useState<AuditReport | null>(null);
   const [comparison, setComparison] = useState<ReportComparison | null>(null);
-  const [managementReport, setManagementReport] = useState<ManagementReport | null>(null);
   const [history, setHistory] = useState<AuditReport[]>([]);
   const [question, setQuestion] = useState("Что важнее проверить в этом документе?");
   const [chatAnswer, setChatAnswer] = useState<ChatResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isReportLoading, setIsReportLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,7 +93,6 @@ export default function App() {
   useEffect(() => {
     if (!report) {
       setComparison(null);
-      setManagementReport(null);
       setChatAnswer(null);
       return;
     }
@@ -124,7 +118,6 @@ export default function App() {
       const result = await uploadAudit(file, storeId, periodMonth);
       setReport(result);
       setHistory((items) => [result, ...items.filter((item) => item.id !== result.id)]);
-      setManagementReport(null);
       setChatAnswer(null);
       setPage("audits");
     } catch (err) {
@@ -139,26 +132,9 @@ export default function App() {
     setFile(null);
     setReport(demoReport);
     setComparison(demoComparison);
-    setManagementReport(demoManagementReport);
     setChatAnswer(null);
     setHistory((items) => [demoReport, ...items.filter((item) => item.id !== demoReport.id)]);
     setPage("audits");
-  }
-
-  async function createManagementReport() {
-    if (!report) return;
-    if (isDemoReport) {
-      setManagementReport(demoManagementReport);
-      return;
-    }
-    setIsReportLoading(true);
-    try {
-      setManagementReport((await fetchManagementReport(report.id)) ?? buildLocalManagementReport(report));
-    } catch {
-      setManagementReport(buildLocalManagementReport(report));
-    } finally {
-      setIsReportLoading(false);
-    }
   }
 
   async function askGemini(event: FormEvent<HTMLFormElement>) {
@@ -268,9 +244,6 @@ export default function App() {
             <AuditsPage
               report={report}
               isDemoReport={isDemoReport}
-              managementReport={managementReport}
-              isReportLoading={isReportLoading}
-              createManagementReport={createManagementReport}
               question={question}
               setQuestion={setQuestion}
               askGemini={askGemini}
@@ -302,14 +275,6 @@ function KpiPage({
 }) {
   return (
     <div className="page-stack">
-      <section className="hero-strip">
-        <div>
-          <p className="eyebrow">KPI dashboard</p>
-          <h2>KPI магазина на одной странице</h2>
-          <p>Продажи, прибыль, расходы, скидки и возвраты собраны в одном месте, чтобы быстро понять состояние месяца.</p>
-        </div>
-      </section>
-
       <div className="metrics">
         <Metric title="Качество" value={`${qualityScore}/100`} />
         <Metric title="Ошибки" value={report?.total_findings ?? 0} />
@@ -328,8 +293,6 @@ function KpiPage({
           ))}
         </div>
       </section>
-
-      <FashionAssistant report={report} />
     </div>
   );
 }
@@ -337,9 +300,6 @@ function KpiPage({
 function AuditsPage({
   report,
   isDemoReport,
-  managementReport,
-  isReportLoading,
-  createManagementReport,
   question,
   setQuestion,
   askGemini,
@@ -350,9 +310,6 @@ function AuditsPage({
 }: {
   report: AuditReport | null;
   isDemoReport: boolean;
-  managementReport: ManagementReport | null;
-  isReportLoading: boolean;
-  createManagementReport: () => void;
   question: string;
   setQuestion: (value: string) => void;
   askGemini: (event: FormEvent<HTMLFormElement>) => void;
@@ -386,28 +343,6 @@ function AuditsPage({
           </div>
         ) : (
           <p className="muted">Загрузите документ или откройте демо, чтобы увидеть аудит.</p>
-        )}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Отчет для руководства</h2>
-          <button className="button compact" type="button" disabled={!report || isReportLoading} onClick={createManagementReport}>
-            {isReportLoading ? "Готовлю..." : "Создать"}
-          </button>
-        </div>
-        {managementReport ? (
-          <div className="management-report">
-            <strong>{managementReport.title}</strong>
-            <p>{managementReport.text}</p>
-            <div className="chips">
-              {managementReport.highlights.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="muted">Короткая управленческая выжимка появится здесь после генерации.</p>
         )}
       </section>
 
@@ -611,29 +546,6 @@ function formatMoney(value: number) {
 
 function formatNumber(value: number) {
   return Math.abs(value) >= 1000 ? formatMoney(value) : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value);
-}
-
-function buildLocalManagementReport(report: AuditReport): ManagementReport {
-  const totals = report.workbook_profile?.metric_totals ?? {};
-  const highRisk = report.findings.filter((item) => ["high", "critical"].includes(item.severity)).length;
-  const topFindings = prioritizeFindings(report.findings).slice(0, 3);
-
-  return {
-    report_id: report.id,
-    title: `Отчет для руководства: ${report.file_name}`,
-    text: [
-      `Проверка завершена. Риск: ${riskLabel[report.risk_level] ?? report.risk_level}, качество: ${report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)}/100.`,
-      `Замечаний: ${report.total_findings}, высокий/критический риск: ${highRisk}.`,
-      report.summary,
-      topFindings.length ? `Первым делом проверьте: ${topFindings.map((item) => item.title).join("; ")}.` : "Критичных зон по текущим правилам не найдено.",
-    ].join(" "),
-    highlights: [
-      `Продажи: ${formatMoney(Number(totals.sales ?? 0))}`,
-      `Прибыль: ${formatMoney(Number(totals.profit ?? 0))}`,
-      `Скидки: ${formatMoney(Number(totals.discount ?? 0))}`,
-      `Возвраты: ${formatMoney(Number(totals.return ?? 0))}`,
-    ],
-  };
 }
 
 function buildLocalReportAnswer(report: AuditReport, question: string): ChatResponse {

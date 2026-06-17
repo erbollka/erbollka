@@ -566,187 +566,6 @@ td {
   background: var(--soft);
 }
 
-.assistant-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(220px, 0.65fr);
-  gap: 22px;
-  border: 1px solid #fed7aa;
-  border-radius: 8px;
-  padding: 26px;
-  color: #fff7ed;
-  background:
-    linear-gradient(135deg, rgb(67 20 7 / 92%), rgb(124 45 18 / 74%) 46%, rgb(15 118 110 / 34%)),
-    url("/assets/fashion-retail-hero.png");
-  background-position: center;
-  background-size: cover;
-  box-shadow: 0 12px 28px rgb(67 20 7 / 16%);
-}
-
-.assistant-hero .eyebrow,
-.assistant-hero p,
-.assistant-hero span {
-  color: rgb(255 247 237 / 84%);
-}
-
-.assistant-hero h2 {
-  max-width: 720px;
-  margin-bottom: 12px;
-  font-size: 30px;
-  line-height: 1.16;
-}
-
-.assistant-hero p {
-  max-width: 760px;
-  margin-bottom: 0;
-  line-height: 1.6;
-}
-
-.hero-actions {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.hero-actions .button {
-  background: #fff7ed;
-  color: var(--primary-strong);
-}
-
-.hero-actions span {
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.fashion-assistant {
-  overflow: hidden;
-}
-
-.assistant-grid {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.4fr);
-  gap: 16px;
-}
-
-.assistant-column,
-.assistant-chat,
-.weekly-kpis {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.assistant-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px;
-  background: var(--cell-warm);
-}
-
-.assistant-summary strong {
-  grid-column: 1 / -1;
-}
-
-.assistant-summary span {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.kpi-target {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px;
-  background: var(--cell-cream);
-}
-
-.kpi-target > div:first-child {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.kpi-target span,
-.kpi-target label {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.kpi-target label {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.kpi-target input {
-  height: 36px;
-}
-
-.prompt-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.prompt-chip {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 8px 11px;
-  color: var(--ink);
-  background: var(--cell-cream);
-  cursor: pointer;
-}
-
-.prompt-chip:hover {
-  border-color: #d7b792;
-  color: var(--primary-strong);
-  background: var(--soft);
-}
-
-.assistant-messages {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 380px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--cell-warm);
-}
-
-.assistant-message {
-  width: min(92%, 680px);
-  border-radius: 8px;
-  padding: 12px 14px;
-  line-height: 1.55;
-}
-
-.assistant-message p {
-  margin-bottom: 7px;
-}
-
-.assistant-message p:last-child {
-  margin-bottom: 0;
-}
-
-.assistant-message.assistant {
-  align-self: flex-start;
-  border: 1px solid #d7b792;
-  background: #f1d9bc;
-}
-
-.assistant-message.user {
-  align-self: flex-end;
-  color: white;
-  background: var(--primary);
-}
-
 @media (max-width: 920px) {
   .topbar {
     align-items: flex-start;
@@ -754,10 +573,6 @@ td {
   }
 
   .layout {
-    grid-template-columns: 1fr;
-  }
-
-  .assistant-hero {
     grid-template-columns: 1fr;
   }
 
@@ -781,10 +596,6 @@ td {
     grid-template-columns: 1fr;
   }
 
-  .assistant-grid,
-  .assistant-summary {
-    grid-template-columns: 1fr;
-  }
 }
 
 body {
@@ -947,35 +758,6 @@ input {
   min-width: 0;
   flex-direction: column;
   gap: 16px;
-}
-
-.hero-strip {
-  border: 1px solid #c9d4ca;
-  border-radius: 8px;
-  padding: 24px;
-  color: #f8faf6;
-  background:
-    linear-gradient(135deg, rgb(32 80 91 / 90%), rgb(92 64 51 / 74%)),
-    url("/assets/fashion-retail-hero.png");
-  background-position: center;
-  background-size: cover;
-}
-
-.hero-strip .eyebrow,
-.hero-strip p {
-  color: rgb(248 250 246 / 86%);
-}
-
-.hero-strip h2 {
-  margin-bottom: 10px;
-  font-size: 28px;
-  line-height: 1.15;
-}
-
-.hero-strip p {
-  max-width: 720px;
-  margin-bottom: 0;
-  line-height: 1.6;
 }
 
 .soft-pill {
