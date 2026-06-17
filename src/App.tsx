@@ -6,7 +6,6 @@ import {
   ManagementReport,
   ReportComparison,
   Severity,
-  askReport,
   fetchComparison,
   fetchHistory,
   fetchManagementReport,
@@ -18,7 +17,9 @@ import { FashionAssistant } from "./components/FashionAssistant";
 import { demoComparison, demoManagementReport, demoReport } from "./lib/demoReport";
 import "./index.css";
 
-const severityLabel = {
+type Page = "kpi" | "audits" | "stats";
+
+const severityLabel: Record<Severity, string> = {
   info: "Инфо",
   low: "Низкий",
   medium: "Средний",
@@ -36,14 +37,37 @@ const riskLabel: Record<string, string> = {
 const kpiLabels: Record<string, string> = {
   sales: "Продажи",
   profit: "Прибыль",
-  salary: "Зарплаты",
+  salary: "Зарплата",
   bonus: "Премии",
   expense: "Расходы",
   discount: "Скидки",
   return: "Возвраты",
 };
 
+const acceptDocuments = [
+  ".xlsx",
+  ".xls",
+  ".xlsm",
+  ".xlsb",
+  ".csv",
+  ".tsv",
+  ".ods",
+  ".pdf",
+  ".txt",
+  ".json",
+  ".xml",
+  ".html",
+  ".md",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".doc",
+  ".docx",
+].join(",");
+
 export default function App() {
+  const [page, setPage] = useState<Page>("kpi");
   const [file, setFile] = useState<File | null>(null);
   const [storeId, setStoreId] = useState("00000000-0000-0000-0000-000000000001");
   const [periodMonth, setPeriodMonth] = useState("2026-06");
@@ -51,13 +75,21 @@ export default function App() {
   const [comparison, setComparison] = useState<ReportComparison | null>(null);
   const [managementReport, setManagementReport] = useState<ManagementReport | null>(null);
   const [history, setHistory] = useState<AuditReport[]>([]);
-  const [question, setQuestion] = useState("Почему прибыль снизилась?");
+  const [question, setQuestion] = useState("Что важнее проверить в этом документе?");
   const [chatAnswer, setChatAnswer] = useState<ChatResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const isDemoReport = report?.id === demoReport.id;
+  const totals = report?.workbook_profile?.metric_totals ?? {};
+  const qualityScore = report?.workbook_profile?.quality_score ?? (report ? Math.max(0, 100 - report.risk_score) : 0);
+  const highRiskCount = report?.findings.filter((item) => ["high", "critical"].includes(item.severity)).length ?? 0;
+  const fraudCount =
+    report?.findings.filter((item) =>
+      ["SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"].includes(item.code),
+    ).length ?? 0;
 
   useEffect(() => {
     fetchHistory().then(setHistory).catch(() => setHistory([]));
@@ -77,26 +109,12 @@ export default function App() {
     fetchComparison(report.id).then(setComparison).catch(() => setComparison(null));
   }, [report]);
 
-  const highRiskCount = useMemo(
-    () => report?.findings.filter((item) => ["high", "critical"].includes(item.severity)).length ?? 0,
-    [report],
-  );
-
-  const fraudCount = useMemo(
-    () =>
-      report?.findings.filter((item) =>
-        ["SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"].includes(item.code),
-      ).length ?? 0,
-    [report],
-  );
-
-  const totals = report?.workbook_profile?.metric_totals ?? {};
-  const qualityScore = report?.workbook_profile?.quality_score ?? (report ? Math.max(0, 100 - report.risk_score) : 0);
+  const monthlyRows = useMemo(() => buildMonthlyRows(history, report), [history, report]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) {
-      setError("Выберите Excel-файл .xlsx или .xls");
+      setError("Выберите документ: Excel, CSV, PDF, TXT, изображение или другой файл.");
       return;
     }
 
@@ -108,8 +126,9 @@ export default function App() {
       setHistory((items) => [result, ...items.filter((item) => item.id !== result.id)]);
       setManagementReport(null);
       setChatAnswer(null);
+      setPage("audits");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка проверки");
+      setError(err instanceof Error ? err.message : "Не удалось проверить документ");
     } finally {
       setIsLoading(false);
     }
@@ -121,12 +140,9 @@ export default function App() {
     setReport(demoReport);
     setComparison(demoComparison);
     setManagementReport(demoManagementReport);
-    setChatAnswer({
-      used_ai: false,
-      answer:
-        "В демо-отчете риск вырос из-за расхождения итоговой строки, премии выше лимита, крупной скидки и возврата перед закрытием месяца.",
-    });
+    setChatAnswer(null);
     setHistory((items) => [demoReport, ...items.filter((item) => item.id !== demoReport.id)]);
+    setPage("audits");
   }
 
   async function createManagementReport() {
@@ -145,23 +161,30 @@ export default function App() {
     }
   }
 
-  async function askQuestion(event: FormEvent<HTMLFormElement>) {
+  async function askGemini(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!report || !question.trim()) return;
-    if (isDemoReport) {
-      setChatAnswer({
-        used_ai: false,
-        answer:
-          "Это демо-ответ: в отчете заметны три главные причины риска — неверный итог продаж, премия выше лимита и подозрительные операции со скидками/возвратами.",
-      });
-      return;
-    }
+    const localAnswer = buildLocalReportAnswer(report, question.trim());
+    setChatAnswer(localAnswer);
     setIsChatLoading(true);
-    setChatAnswer(buildLocalReportAnswer(report, question.trim()));
+
     try {
-      setChatAnswer(await withTimeout(askReport(report.id, question.trim()), 8000));
+      const { supabase } = await import("./lib/supabase");
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke("ai", {
+          body: {
+            system:
+              "Ты Gemini AI-аудитор и помощник владельца fashion retail. Отвечай по-русски, коротко и по делу. Используй только переданные данные документа, KPI и findings. Не придумывай числа.",
+            prompt: buildGeminiReportPrompt(report, question.trim()),
+          },
+        }),
+        10000,
+      );
+      if (!error && typeof data?.text === "string" && data.text.trim()) {
+        setChatAnswer({ answer: data.text.trim(), used_ai: true });
+      }
     } catch {
-      // The local report answer is already shown. Backend AI is optional.
+      // Local answer is already visible.
     } finally {
       setIsChatLoading(false);
     }
@@ -169,31 +192,40 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
+      <header className="app-header">
+        <div className="header-copy">
           <BrandLogo />
           <p className="eyebrow">Fashion retail workspace</p>
-          <h1>Fashion Retail AI Assistant</h1>
+          <h1>Управление магазином: KPI, аудиты, статистика</h1>
           <p className="subtitle">
-            Личный AI-помощник для магазина одежды: еженедельные KPI, продажи, выручка, скидки, возвраты,
-            идеи для команды, витрины, ассортимента и планерок.
+            Загружайте отчеты и документы, проверяйте риски, сравнивайте месяцы и задавайте вопросы Gemini по данным магазина.
           </p>
         </div>
-        {report ? (
-          isDemoReport ? (
-            <span className="demo-badge">Демо-отчет</span>
-          ) : (
+        <div className="header-actions">
+          {report && !isDemoReport ? (
             <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
-              Скачать PDF
+              PDF
             </a>
-          )
-        ) : null}
+          ) : null}
+          <button className="button" type="button" onClick={openDemoReport}>
+            Демо
+          </button>
+        </div>
       </header>
 
-      <section className="layout">
-        <aside className="panel sticky-panel">
-          <h2>Данные магазина</h2>
+      <nav className="page-tabs" aria-label="Разделы">
+        <TabButton active={page === "kpi"} onClick={() => setPage("kpi")} label="KPI" />
+        <TabButton active={page === "audits"} onClick={() => setPage("audits")} label="Аудиты и документы" />
+        <TabButton active={page === "stats"} onClick={() => setPage("stats")} label="Статистика по месяцам" />
+      </nav>
+
+      <section className="workspace">
+        <aside className="upload-panel">
           <form className="form" onSubmit={onSubmit}>
+            <div>
+              <h2>Загрузка документа</h2>
+              <p className="muted">Excel, CSV, PDF, TXT, изображения и офисные документы. Таблицы читаются локально, сложные файлы отправляются в Gemini.</p>
+            </div>
             <label>
               Магазин
               <input value={storeId} onChange={(event) => setStoreId(event.target.value)} />
@@ -203,223 +235,315 @@ export default function App() {
               <input type="month" value={periodMonth} onChange={(event) => setPeriodMonth(event.target.value)} />
             </label>
             <label className="file-drop">
-              <span>{file ? file.name : "Загрузить Excel"}</span>
-              <small>.xlsx или .xls. Все листы будут прочитаны автоматически.</small>
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              />
+              <span>{file ? file.name : "Выбрать документ"}</span>
+              <small>Поддерживаются таблицы, PDF, текст, изображения и офисные файлы.</small>
+              <input type="file" accept={acceptDocuments} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             </label>
             {error ? <p className="error">{error}</p> : null}
-            <div className="button-row">
-              <button className="button" disabled={isLoading}>
-                {isLoading ? "Обновляем данные..." : "Загрузить отчет"}
-              </button>
-              <button className="button secondary" type="button" onClick={openDemoReport}>
-                Демо-магазин
-              </button>
-            </div>
+            <button className="button" disabled={isLoading}>
+              {isLoading ? "Проверяю..." : "Загрузить и проверить"}
+            </button>
           </form>
 
-          <div className="roadmap-mini">
-            <strong>Fashion assistant modules</strong>
-            <span>Еженедельные KPI команды</span>
-            <span>Идеи для витрины и капсул</span>
-            <span>Анализ скидок, возвратов и выручки</span>
+          <div className="current-report">
+            <span>Текущий документ</span>
+            <strong>{report?.file_name ?? "Нет документа"}</strong>
+            <small>{report ? `${riskLabel[report.risk_level] ?? report.risk_level}, ошибок: ${report.total_findings}` : "Откройте демо или загрузите файл"}</small>
           </div>
         </aside>
 
-        <section className="content">
-          <section className="assistant-hero">
-            <div>
-              <p className="eyebrow">AI co-pilot for store teams</p>
-              <h2>Обсуждайте продажи, тренды и действия на неделю в одном месте</h2>
-              <p>
-                Ассистент использует KPI магазина и отчетность, чтобы помочь команде придумать план продаж,
-                улучшить мерчандайзинг, подготовить планерку и найти идеи для fashion retail.
-              </p>
-            </div>
-            <div className="hero-actions">
-              <button className="button" type="button" onClick={openDemoReport}>
-                Открыть демо-магазин
-              </button>
-              <span>Работает через Supabase AI Function, с fallback-ответом без ключа.</span>
-            </div>
-          </section>
-
-          <FashionAssistant report={report} />
-
-          <div className="metrics">
-            <Metric title="Качество" value={`${qualityScore}/100`} />
-            <Metric title="Ошибки" value={report?.total_findings ?? 0} />
-            <Metric title="Риск" value={report ? riskLabel[report.risk_level] ?? report.risk_level : "Нет данных"} />
-            <Metric title="Высокий риск" value={highRiskCount} />
-            <Metric title="Fraud" value={fraudCount} />
-          </div>
-
-          <section className="panel">
-            <h2>Дашборд KPI</h2>
-            <div className="kpi-grid">
-              {Object.entries(kpiLabels).map(([key, label]) => (
-                <KpiBar key={key} label={label} value={Number(totals[key] ?? 0)} max={maxKpi(totals)} />
-              ))}
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>Итог аудита</h2>
-            {report ? (
-              <div className="stack">
-                {isDemoReport ? (
-                  <div className="demo-note">
-                    Это демонстрационный отчет: он показывает, как будет выглядеть результат без загрузки Excel.
-                  </div>
-                ) : null}
-                <div className="summary-box">
-                  <strong>{report.file_name}</strong>
-                  <p>{report.summary}</p>
-                </div>
-                <div className="recommendations">
-                  {report.recommendations.map((item) => (
-                    <div key={item}>{item}</div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="muted">Загрузите отчет, чтобы увидеть ошибки, подозрительные строки и рекомендации.</p>
-            )}
-          </section>
-
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Отчет для руководства</h2>
-              <button className="button compact" type="button" disabled={!report || isReportLoading} onClick={createManagementReport}>
-                {isReportLoading ? "Генерируем..." : "Создать отчет"}
-              </button>
-            </div>
-            {managementReport ? (
-              <div className="management-report">
-                <strong>{managementReport.title}</strong>
-                <p>{managementReport.text}</p>
-                <div className="chips">
-                  {managementReport.highlights.map((item) => (
-                    <span key={item}>{item}</span>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="muted">
-                Кнопка генерирует готовый текст: рост продаж, снижение прибыли, изменение зарплат, премий и расходов.
-              </p>
-            )}
-          </section>
-
-          <section className="panel">
-            <h2>AI-чат с отчетом</h2>
-            <form className="chat-form" onSubmit={askQuestion}>
-              <input value={question} onChange={(event) => setQuestion(event.target.value)} />
-              <button className="button compact" disabled={!report || isChatLoading}>
-                {isChatLoading ? "Думаем..." : "Спросить"}
-              </button>
-            </form>
-            {chatAnswer ? (
-              <div className="chat-answer">
-                <span>{chatAnswer.used_ai ? "AI-ответ" : "Ответ по правилам"}</span>
-                <p>{chatAnswer.answer}</p>
-              </div>
-            ) : (
-              <p className="muted">Примеры: “Почему прибыль снизилась?”, “Какие расходы выросли?”, “Есть ли подозрительные операции?”</p>
-            )}
-          </section>
-
-          <section className="panel">
-            <h2>Сравнение с прошлым месяцем</h2>
-            {comparison ? (
-              <div className="stack">
-                <p className="muted">{comparison.summary}</p>
-                <div className="comparison-grid">
-                  {comparison.metrics.map((item) => (
-                    <div key={item.metric_name} className="comparison-item">
-                      <strong>{metricName(item.metric_name)}</strong>
-                      <span>
-                        {formatMoney(item.previous_value)} {"->"} {formatMoney(item.current_value)}
-                        {item.delta_percent !== null ? ` (${item.delta_percent > 0 ? "+" : ""}${item.delta_percent}%)` : ""}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="muted">Загрузите апрель, май, июнь — система покажет рост продаж, прибыль, зарплаты и отклонения.</p>
-            )}
-          </section>
-
-          <section className="panel">
-            <h2>Контроль мошенничества</h2>
-            <div className="risk-grid">
-              {["BONUS_LIMIT_EXCEEDED", "SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "DUPLICATE_ROW"].map((code) => {
-                const count = report?.findings.filter((item) => item.code === code).length ?? 0;
-                return (
-                  <div className="risk-card" key={code}>
-                    <strong>{fraudLabel(code)}</strong>
-                    <span>{count} сигналов</span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>Найденные проблемы</h2>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Риск</th>
-                    <th>Лист</th>
-                    <th>Ячейка</th>
-                    <th>Описание</th>
-                    <th>Что сделать</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(report?.findings ?? []).map((finding, index) => (
-                    <tr key={`${finding.code}-${index}`}>
-                      <td>{severityLabel[finding.severity]}</td>
-                      <td>{finding.sheet_name}</td>
-                      <td>{finding.cell ?? "-"}</td>
-                      <td>{finding.description}</td>
-                      <td>{finding.suggested_fix}</td>
-                    </tr>
-                  ))}
-                  {!report?.findings.length ? (
-                    <tr>
-                      <td colSpan={5} className="muted">
-                        Пока нет данных проверки.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>История</h2>
-            <div className="history-list">
-              {history.slice(0, 6).map((item) => (
-                <button key={item.id} type="button" className="history-item" onClick={() => setReport(item)}>
-                  <span>{item.file_name}</span>
-                  <span>{riskLabel[item.risk_level] ?? item.risk_level}</span>
-                </button>
-              ))}
-              {!history.length ? <p className="muted">История появится после первой проверки.</p> : null}
-            </div>
-          </section>
+        <section className="page-content">
+          {page === "kpi" ? (
+            <KpiPage report={report} totals={totals} qualityScore={qualityScore} highRiskCount={highRiskCount} fraudCount={fraudCount} />
+          ) : null}
+          {page === "audits" ? (
+            <AuditsPage
+              report={report}
+              isDemoReport={isDemoReport}
+              managementReport={managementReport}
+              isReportLoading={isReportLoading}
+              createManagementReport={createManagementReport}
+              question={question}
+              setQuestion={setQuestion}
+              askGemini={askGemini}
+              chatAnswer={chatAnswer}
+              isChatLoading={isChatLoading}
+              history={history}
+              selectReport={setReport}
+            />
+          ) : null}
+          {page === "stats" ? <StatsPage report={report} comparison={comparison} rows={monthlyRows} /> : null}
         </section>
       </section>
     </main>
+  );
+}
+
+function KpiPage({
+  report,
+  totals,
+  qualityScore,
+  highRiskCount,
+  fraudCount,
+}: {
+  report: AuditReport | null;
+  totals: Record<string, number>;
+  qualityScore: number;
+  highRiskCount: number;
+  fraudCount: number;
+}) {
+  return (
+    <div className="page-stack">
+      <section className="hero-strip">
+        <div>
+          <p className="eyebrow">KPI dashboard</p>
+          <h2>KPI магазина на одной странице</h2>
+          <p>Продажи, прибыль, расходы, скидки и возвраты собраны в одном месте, чтобы быстро понять состояние месяца.</p>
+        </div>
+      </section>
+
+      <div className="metrics">
+        <Metric title="Качество" value={`${qualityScore}/100`} />
+        <Metric title="Ошибки" value={report?.total_findings ?? 0} />
+        <Metric title="Высокий риск" value={highRiskCount} />
+        <Metric title="Fraud-сигналы" value={fraudCount} />
+      </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Финансовые KPI</h2>
+          <span className="soft-pill">{report ? report.file_name : "Нет файла"}</span>
+        </div>
+        <div className="kpi-grid">
+          {Object.entries(kpiLabels).map(([key, label]) => (
+            <KpiBar key={key} label={label} value={Number(totals[key] ?? 0)} max={maxKpi(totals)} />
+          ))}
+        </div>
+      </section>
+
+      <FashionAssistant report={report} />
+    </div>
+  );
+}
+
+function AuditsPage({
+  report,
+  isDemoReport,
+  managementReport,
+  isReportLoading,
+  createManagementReport,
+  question,
+  setQuestion,
+  askGemini,
+  chatAnswer,
+  isChatLoading,
+  history,
+  selectReport,
+}: {
+  report: AuditReport | null;
+  isDemoReport: boolean;
+  managementReport: ManagementReport | null;
+  isReportLoading: boolean;
+  createManagementReport: () => void;
+  question: string;
+  setQuestion: (value: string) => void;
+  askGemini: (event: FormEvent<HTMLFormElement>) => void;
+  chatAnswer: ChatResponse | null;
+  isChatLoading: boolean;
+  history: AuditReport[];
+  selectReport: (report: AuditReport) => void;
+}) {
+  return (
+    <div className="page-stack">
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Audit workspace</p>
+            <h2>Аудиты и документы</h2>
+          </div>
+          {isDemoReport ? <span className="soft-pill">Демо</span> : null}
+        </div>
+
+        {report ? (
+          <div className="stack">
+            <div className="summary-box">
+              <strong>{report.file_name}</strong>
+              <p>{report.summary}</p>
+            </div>
+            <div className="recommendations">
+              {report.recommendations.map((item) => (
+                <div key={item}>{item}</div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="muted">Загрузите документ или откройте демо, чтобы увидеть аудит.</p>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Отчет для руководства</h2>
+          <button className="button compact" type="button" disabled={!report || isReportLoading} onClick={createManagementReport}>
+            {isReportLoading ? "Готовлю..." : "Создать"}
+          </button>
+        </div>
+        {managementReport ? (
+          <div className="management-report">
+            <strong>{managementReport.title}</strong>
+            <p>{managementReport.text}</p>
+            <div className="chips">
+              {managementReport.highlights.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="muted">Короткая управленческая выжимка появится здесь после генерации.</p>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Gemini-чат по документу</h2>
+        <form className="chat-form" onSubmit={askGemini}>
+          <input value={question} onChange={(event) => setQuestion(event.target.value)} />
+          <button className="button compact" disabled={!report || isChatLoading}>
+            {isChatLoading ? "Gemini думает..." : "Спросить"}
+          </button>
+        </form>
+        {chatAnswer ? (
+          <div className="chat-answer">
+            <span>{chatAnswer.used_ai ? "Gemini" : "Локальный ответ"}</span>
+            <p>{chatAnswer.answer}</p>
+          </div>
+        ) : (
+          <p className="muted">Например: “где риск по скидкам?”, “что проверить первым?”, “почему прибыль ниже?”.</p>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Найденные проблемы</h2>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Риск</th>
+                <th>Лист</th>
+                <th>Ячейка</th>
+                <th>Описание</th>
+                <th>Что сделать</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(report?.findings ?? []).map((finding, index) => (
+                <tr key={`${finding.code}-${index}`}>
+                  <td>{severityLabel[finding.severity]}</td>
+                  <td>{finding.sheet_name}</td>
+                  <td>{finding.cell ?? "-"}</td>
+                  <td>{finding.description}</td>
+                  <td>{finding.suggested_fix}</td>
+                </tr>
+              ))}
+              {!report?.findings.length ? (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    Пока нет данных аудита.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>История документов</h2>
+        <div className="history-list">
+          {history.map((item) => (
+            <button className="history-item" type="button" key={item.id} onClick={() => selectReport(item)}>
+              <span>{item.file_name}</span>
+              <small>{new Date(item.created_at).toLocaleDateString("ru-RU")}</small>
+            </button>
+          ))}
+          {!history.length ? <p className="muted">История появится после первой проверки.</p> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StatsPage({ report, comparison, rows }: { report: AuditReport | null; comparison: ReportComparison | null; rows: MonthlyRow[] }) {
+  return (
+    <div className="page-stack">
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Month over month</p>
+            <h2>Статистика и сравнение всех месяцев</h2>
+          </div>
+          <span className="soft-pill">{rows.length} мес.</span>
+        </div>
+
+        {comparison ? (
+          <div className="stack">
+            <p className="muted">{comparison.summary}</p>
+            <div className="comparison-grid">
+              {comparison.metrics.map((item) => (
+                <div key={item.metric_name} className="comparison-item">
+                  <strong>{metricName(item.metric_name)}</strong>
+                  <span>
+                    {formatNumber(item.previous_value)} → {formatNumber(item.current_value)}
+                    {item.delta_percent !== null ? ` (${item.delta_percent > 0 ? "+" : ""}${item.delta_percent}%)` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="muted">Загрузите минимум два месяца, чтобы увидеть сравнение с прошлым периодом.</p>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Все месяцы</h2>
+        <div className="month-chart">
+          {rows.map((row) => (
+            <div className="month-row" key={row.key}>
+              <strong>{row.label}</strong>
+              <div className="month-bars">
+                <MiniBar label="Продажи" value={row.sales} max={maxRows(rows, "sales")} />
+                <MiniBar label="Прибыль" value={row.profit} max={maxRows(rows, "profit")} />
+                <MiniBar label="Расходы" value={row.expense} max={maxRows(rows, "expense")} />
+                <MiniBar label="Риск" value={row.riskScore} max={100} />
+              </div>
+            </div>
+          ))}
+          {!rows.length ? <p className="muted">Нет данных для месячной статистики.</p> : null}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Текущий месяц</h2>
+        {report ? (
+          <div className="risk-grid">
+            <RiskCard title="Риск" value={riskLabel[report.risk_level] ?? report.risk_level} />
+            <RiskCard title="Баллы риска" value={report.risk_score} />
+            <RiskCard title="Замечания" value={report.total_findings} />
+            <RiskCard title="Качество" value={`${report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)}/100`} />
+          </div>
+        ) : (
+          <p className="muted">Выберите документ, чтобы увидеть сводку месяца.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button className={active ? "tab active" : "tab"} type="button" onClick={onClick}>
+      {label}
+    </button>
   );
 }
 
@@ -447,35 +571,53 @@ function KpiBar({ label, value, max }: { label: string; value: number; max: numb
   );
 }
 
+function MiniBar({ label, value, max }: { label: string; value: number; max: number }) {
+  const width = max > 0 ? Math.max(4, Math.min(100, (Math.abs(value) / max) * 100)) : 4;
+  return (
+    <div className="mini-bar">
+      <span>{label}</span>
+      <div className="bar-track">
+        <div className="bar-fill" style={{ width: `${width}%` }} />
+      </div>
+      <strong>{label === "Риск" ? value : formatMoney(value)}</strong>
+    </div>
+  );
+}
+
+function RiskCard({ title, value }: { title: string; value: string | number }) {
+  return (
+    <div className="risk-card">
+      <strong>{title}</strong>
+      <span>{value}</span>
+    </div>
+  );
+}
+
 function maxKpi(totals: Record<string, number>) {
   return Math.max(1, ...Object.values(totals).map((value) => Math.abs(Number(value) || 0)));
 }
 
 function formatMoney(value: number) {
-  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(value)} ₸`;
+  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(value)} ₽`;
+}
+
+function formatNumber(value: number) {
+  return Math.abs(value) >= 1000 ? formatMoney(value) : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value);
 }
 
 function buildLocalManagementReport(report: AuditReport): ManagementReport {
   const totals = report.workbook_profile?.metric_totals ?? {};
   const highRisk = report.findings.filter((item) => ["high", "critical"].includes(item.severity)).length;
-  const fraudSignals = report.findings.filter((item) =>
-    ["SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"].includes(item.code),
-  ).length;
   const topFindings = prioritizeFindings(report.findings).slice(0, 3);
 
   return {
     report_id: report.id,
     title: `Отчет для руководства: ${report.file_name}`,
     text: [
-      `Проверка завершена. Общий риск: ${riskLabel[report.risk_level] ?? report.risk_level}, качество отчета: ${
-        report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)
-      }/100.`,
-      `Найдено замечаний: ${report.total_findings}, из них высокого/критического риска: ${highRisk}. Fraud-сигналов: ${fraudSignals}.`,
+      `Проверка завершена. Риск: ${riskLabel[report.risk_level] ?? report.risk_level}, качество: ${report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)}/100.`,
+      `Замечаний: ${report.total_findings}, высокий/критический риск: ${highRisk}.`,
       report.summary,
-      topFindings.length
-        ? `Главные зоны внимания: ${topFindings.map((item) => `${item.title} (${item.sheet_name}${item.cell ? `, ${item.cell}` : ""})`).join("; ")}.`
-        : "Критичных зон внимания по текущим правилам не найдено.",
-      `Главное действие: ${report.recommendations[0] ?? "сверить ключевые показатели и повторить проверку после исправлений."}`,
+      topFindings.length ? `Первым делом проверьте: ${topFindings.map((item) => item.title).join("; ")}.` : "Критичных зон по текущим правилам не найдено.",
     ].join(" "),
     highlights: [
       `Продажи: ${formatMoney(Number(totals.sales ?? 0))}`,
@@ -488,119 +630,43 @@ function buildLocalManagementReport(report: AuditReport): ManagementReport {
 
 function buildLocalReportAnswer(report: AuditReport, question: string): ChatResponse {
   const totals = report.workbook_profile?.metric_totals ?? {};
-  const lowerQuestion = question.toLowerCase();
   const topFindings = prioritizeFindings(report.findings);
-  const sales = Number(totals.sales ?? 0);
-  const profit = Number(totals.profit ?? 0);
-  const expense = Number(totals.expense ?? 0);
-  const discount = Number(totals.discount ?? 0);
-  const returns = Number(totals.return ?? 0);
-  const discountShare = percentOf(discount, sales);
-  const returnsShare = percentOf(returns, sales);
-  const profitShare = percentOf(profit, sales);
-
-  if (lowerQuestion.includes("приб") || lowerQuestion.includes("profit")) {
-    return {
-      used_ai: false,
-      answer: [
-        `По отчету прибыль сейчас ${formatMoney(profit)} (${profitShare}% от продаж).`,
-        `Что может влиять: расходы ${formatMoney(expense)}, скидки ${formatMoney(discount)} (${discountShare}%), возвраты ${formatMoney(returns)} (${returnsShare}%).`,
-        "План проверки: сначала сверьте итоговые формулы, затем крупные скидки/возвраты, затем расходы и премии.",
-        topFindings[0] ? `Самый важный риск в файле: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "",
-      ]
-        .filter(Boolean)
-        .join(" "),
-    };
-  }
-
-  if (lowerQuestion.includes("скид") || lowerQuestion.includes("возврат")) {
-    return {
-      used_ai: false,
-      answer: [
-        `Скидки: ${formatMoney(discount)} (${discountShare}% от продаж), возвраты: ${formatMoney(returns)} (${returnsShare}% от продаж).`,
-        "Проверьте три вещи: кто разрешил скидку, есть ли основание в акции/чеке, не попали ли возвраты в конец периода.",
-        "Для команды: сначала продавать образ и ценность комплекта, а скидку использовать только как последний аргумент.",
-      ].join(" "),
-    };
-  }
-
-  if (lowerQuestion.includes("продаж") || lowerQuestion.includes("выруч")) {
-    return {
-      used_ai: false,
-      answer: [
-        `Продажи по отчету: ${formatMoney(sales)}.`,
-        `Для роста на ближайшую неделю: выберите товар недели, соберите 2-3 готовых комплекта и отслеживайте средний чек через допродажи.`,
-        `Следите, чтобы рост не съедался скидками (${discountShare}%) и возвратами (${returnsShare}%).`,
-      ].join(" "),
-    };
-  }
-
-  if (
-    lowerQuestion.includes("ассортимент") ||
-    lowerQuestion.includes("товар") ||
-    lowerQuestion.includes("витрин") ||
-    lowerQuestion.includes("сервис") ||
-    lowerQuestion.includes("команд")
-  ) {
-    return {
-      used_ai: false,
-      answer: [
-        "По загруженному отчету я вижу финансовую часть и риски, поэтому связываю советы с цифрами.",
-        `Продажи: ${formatMoney(sales)}, прибыль: ${formatMoney(profit)}, скидки: ${formatMoney(discount)} (${discountShare}%), возвраты: ${formatMoney(returns)} (${returnsShare}%).`,
-        "Что сделать: выделить товар недели, собрать 2-3 готовых комплекта, дать продавцам короткий сценарий под поводы клиента: работа, семья, выходной, подарок.",
-        "Что проверить в файле: какие категории дают продажи без скидки, где возвраты выше обычного, какие товары продаются только со скидкой.",
-        topFindings[0] ? `Риск, который нельзя игнорировать: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "",
-      ]
-        .filter(Boolean)
-        .join(" "),
-    };
-  }
-
-  if (lowerQuestion.includes("риск") || lowerQuestion.includes("ошиб") || lowerQuestion.includes("аудит")) {
-    return {
-      used_ai: false,
-      answer: [
-        `Уровень риска: ${riskLabel[report.risk_level] ?? report.risk_level}, замечаний: ${report.total_findings}.`,
-        topFindings.length
-          ? `Приоритет исправлений: ${topFindings.map((item, index) => `${index + 1}. ${item.title} - ${item.suggested_fix}`).join(" ")}`
-          : "Серьезных замечаний не найдено.",
-        "После исправлений загрузите файл повторно и сравните качество отчета.",
-      ].join(" "),
-    };
-  }
-
   return {
     used_ai: false,
     answer: [
-      `Я отвечаю не по шаблону, а по загруженному отчету и вашему вопросу: “${question}”. В файле найдено ${report.total_findings} замечаний, уровень риска - ${
-        riskLabel[report.risk_level] ?? report.risk_level
-      }.`,
-      buildQuestionSpecificAdvice(lowerQuestion, {
-        sales,
-        profit,
-        expense,
-        discount,
-        returns,
-        discountShare,
-        returnsShare,
-        profitShare,
-      }),
-      topFindings[0] ? `Первое, что стоит проверить в аудите: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : report.summary,
-      report.recommendations[0] ? `Рекомендация: ${report.recommendations[0]}` : "",
-      `Ключевые цифры: продажи ${formatMoney(sales)}, прибыль ${formatMoney(profit)}, скидки ${formatMoney(discount)}, возвраты ${formatMoney(returns)}.`,
-    ]
-      .filter(Boolean)
-      .join(" "),
+      `Отвечаю по загруженному документу: ${report.file_name}. Риск: ${riskLabel[report.risk_level] ?? report.risk_level}, замечаний: ${report.total_findings}.`,
+      `Ключевые суммы: продажи ${formatMoney(Number(totals.sales ?? 0))}, прибыль ${formatMoney(Number(totals.profit ?? 0))}, расходы ${formatMoney(Number(totals.expense ?? 0))}, скидки ${formatMoney(Number(totals.discount ?? 0))}, возвраты ${formatMoney(Number(totals.return ?? 0))}.`,
+      topFindings[0] ? `Первое, что стоит проверить: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "Серьезных замечаний не найдено.",
+      `Вопрос: ${question}`,
+    ].join(" "),
   };
+}
+
+function buildGeminiReportPrompt(report: AuditReport, question: string) {
+  const payload = {
+    question,
+    file_name: report.file_name,
+    risk_score: report.risk_score,
+    risk_level: report.risk_level,
+    summary: report.summary,
+    recommendations: report.recommendations,
+    workbook_profile: report.workbook_profile,
+    findings: report.findings.slice(0, 60).map((item) => ({
+      code: item.code,
+      severity: item.severity,
+      sheet: item.sheet_name,
+      cell: item.cell,
+      title: item.title,
+      description: item.description,
+      suggested_fix: item.suggested_fix,
+    })),
+  };
+  return `Ответь на вопрос владельца магазина по этому документу. Данные:\n${JSON.stringify(payload, null, 2)}`;
 }
 
 function prioritizeFindings(findings: Finding[]) {
   const weight: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   return [...findings].sort((a, b) => weight[a.severity] - weight[b.severity]);
-}
-
-function percentOf(value: number, total: number) {
-  return total > 0 ? Math.round((value / total) * 100) : 0;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
@@ -612,35 +678,39 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
   ]);
 }
 
-function buildQuestionSpecificAdvice(
-  question: string,
-  metrics: {
-    sales: number;
-    profit: number;
-    expense: number;
-    discount: number;
-    returns: number;
-    discountShare: number;
-    returnsShare: number;
-    profitShare: number;
-  },
-) {
-  if (question.includes("почему") || question.includes("причин") || question.includes("упал") || question.includes("сниз")) {
-    return `Ищите причину по цепочке: продажи ${formatMoney(metrics.sales)}, прибыль ${metrics.profitShare}%, расходы ${formatMoney(metrics.expense)}, скидки ${metrics.discountShare}%, возвраты ${metrics.returnsShare}%. Если скидки или возвраты растут быстрее продаж, проблема может быть не в спросе, а в качестве продаж и контроле операций.`;
-  }
-  if (question.includes("что делать") || question.includes("как") || question.includes("улучш") || question.includes("поднять")) {
-    return "Практичный план: выберите один KPI на неделю, назначьте товар/комплект недели, дайте продавцам короткий скрипт под клиентский повод и каждый вечер сверяйте результат с продажами, скидками и возвратами.";
-  }
-  if (question.includes("клиент") || question.includes("сервис") || question.includes("возраж") || question.includes("дорого")) {
-    return "По сервису: продавцу нужно начинать не с цены, а с повода клиента. Работа, семья, выходной, подарок, поездка - под каждый повод можно собрать образ и только потом обсуждать цену или альтернативу.";
-  }
-  if (question.includes("ассортимент") || question.includes("размер") || question.includes("товар") || question.includes("закуп")) {
-    return "По ассортименту: проверьте, какие товары меряют, но не покупают; какие продаются только со скидкой; каких размеров не хватает; какие вещи не имеют пары для готового образа.";
-  }
-  if (question.includes("соц") || question.includes("instagram") || question.includes("инст") || question.includes("контент")) {
-    return "Для контента лучше показывать не отдельную вещь, а жизненный сценарий: семейный выход, офисная неделя, подарок, вечер. Это поддерживает продажи без постоянной скидки.";
-  }
-  return "Я бы проверила вопрос через три линзы: деньги, клиент, команда. Деньги - что происходит с прибылью, скидками и возвратами. Клиент - какой повод закрывает товар. Команда - может ли продавец объяснить предложение просто и тепло.";
+type MonthlyRow = {
+  key: string;
+  label: string;
+  sales: number;
+  profit: number;
+  expense: number;
+  riskScore: number;
+};
+
+function buildMonthlyRows(history: AuditReport[], report: AuditReport | null): MonthlyRow[] {
+  const map = new Map<string, AuditReport>();
+  [...history, ...(report ? [report] : [])].forEach((item) => {
+    const key = item.created_at.slice(0, 7);
+    if (!map.has(key)) map.set(key, item);
+  });
+
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, item]) => {
+      const totals = item.workbook_profile?.metric_totals ?? {};
+      return {
+        key,
+        label: new Date(`${key}-01T00:00:00`).toLocaleDateString("ru-RU", { month: "long", year: "numeric" }),
+        sales: Number(totals.sales ?? 0),
+        profit: Number(totals.profit ?? 0),
+        expense: Number(totals.expense ?? 0),
+        riskScore: item.risk_score,
+      };
+    });
+}
+
+function maxRows(rows: MonthlyRow[], field: "sales" | "profit" | "expense" | "riskScore") {
+  return Math.max(1, ...rows.map((row) => Math.abs(row[field])));
 }
 
 function metricName(name: string) {
@@ -651,19 +721,11 @@ function metricName(name: string) {
     high_risk_findings: "Высокий риск",
     sales: "Продажи",
     profit: "Прибыль",
-    salary: "Зарплаты",
+    salary: "Зарплата",
     bonus: "Премии",
     expense: "Расходы",
+    discount: "Скидки",
+    return: "Возвраты",
   };
   return labels[name] ?? name;
-}
-
-function fraudLabel(code: string) {
-  const labels: Record<string, string> = {
-    BONUS_LIMIT_EXCEEDED: "Необычные премии",
-    SUSPICIOUS_DISCOUNT: "Подозрительные скидки",
-    MONTH_END_RETURN_SPIKE: "Возвраты перед закрытием",
-    DUPLICATE_ROW: "Дубли операций",
-  };
-  return labels[code] ?? code;
 }

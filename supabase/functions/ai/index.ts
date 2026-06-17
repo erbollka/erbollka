@@ -6,10 +6,10 @@
 //   2) Положи его в секрет:  npm run ai:secret -- GEMINI_API_KEY=твой_ключ
 //   3) Задеплой функцию:     npm run ai:deploy
 //
-// Модель можно поменять (gemini-2.0-flash — быстрая и бесплатная).
+// Модель можно поменять (gemini-2.5-flash — быстрая модель семейства Gemini 2.5).
 
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-const MODEL_CANDIDATES = (Deno.env.get('GEMINI_MODEL') ?? 'gemini-2.0-flash,gemini-3.1-flash-lite,gemini-3.5-flash,gemini-flash-latest')
+const MODEL_CANDIDATES = (Deno.env.get('GEMINI_MODEL') ?? 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.5-pro')
   .split(',')
   .map((item) => item.trim())
   .filter(Boolean);
@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     if (!GEMINI_API_KEY) {
       throw new Error('Нет GEMINI_API_KEY. Поставь секрет: npm run ai:secret -- GEMINI_API_KEY=...');
     }
-    const { prompt, system } = await req.json();
+    const { prompt, system, files } = await req.json();
     if (!prompt) throw new Error('Нужно поле prompt');
 
     let lastError = 'AI returned an empty response';
@@ -40,7 +40,22 @@ Deno.serve(async (req) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [
+              {
+                parts: [
+                  { text: prompt },
+                  ...((Array.isArray(files) ? files : [])
+                    .filter((file) => file?.data && file?.mimeType)
+                    .slice(0, 3)
+                    .map((file) => ({
+                      inlineData: {
+                        mimeType: String(file.mimeType),
+                        data: String(file.data),
+                      },
+                    }))),
+                ],
+              },
+            ],
             generationConfig: {
               temperature: 0.45,
               topP: 0.9,

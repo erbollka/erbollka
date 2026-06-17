@@ -49,6 +49,24 @@ export async function analyzeExcelInBrowser(file: File): Promise<AuditReport> {
   };
 }
 
+export async function analyzeDocumentInBrowser(file: File): Promise<AuditReport> {
+  if (isSpreadsheet(file)) {
+    return analyzeExcelInBrowser(file);
+  }
+
+  const text = await tryReadText(file);
+  if (text.trim()) {
+    return buildTextDocumentReport(file, text);
+  }
+
+  const geminiText = await tryAnalyzeWithGemini(file);
+  if (geminiText) {
+    return buildGeminiDocumentReport(file, geminiText);
+  }
+
+  return buildUnsupportedDocumentReport(file);
+}
+
 function buildWorkbookProfile(workbook: XLSX.WorkBook): WorkbookProfile {
   const totals: Record<string, number> = Object.fromEntries(Object.keys(metricPatterns).map((key) => [key, 0]));
   const sheets = workbook.SheetNames.map((sheetName) => {
@@ -307,4 +325,173 @@ function columnLetter(index: number) {
 
 function round(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function isSpreadsheet(file: File) {
+  const name = file.name.toLowerCase();
+  return /\.(xlsx|xls|xlsm|xlsb|csv|tsv|ods)$/.test(name);
+}
+
+async function tryReadText(file: File) {
+  const name = file.name.toLowerCase();
+  const readable = /\.(txt|csv|tsv|json|xml|html|htm|md|log)$/.test(name) || file.type.startsWith("text/");
+  if (!readable) return "";
+  try {
+    return await file.text();
+  } catch {
+    return "";
+  }
+}
+
+async function tryAnalyzeWithGemini(file: File) {
+  try {
+    const { supabase } = await import("./supabase");
+    const data = await fileToBase64(file);
+    const { data: result, error } = await supabase.functions.invoke("ai", {
+      body: {
+        system:
+          "Ты AI-аудитор документов для fashion retail. Прочитай документ, выдели KPI, риски, ошибки, возвраты, скидки, расходы и дай краткий русский отчет. Не выдумывай числа.",
+        prompt:
+          "Распознай загруженный документ. Верни: 1) что это за документ, 2) ключевые KPI и суммы, 3) риски/ошибки, 4) что проверить владельцу магазина.",
+        files: [{ mimeType: file.type || guessMimeType(file.name), data }],
+      },
+    });
+    if (!error && typeof result?.text === "string") return result.text.trim();
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function buildTextDocumentReport(file: File, text: string): AuditReport {
+  const rows = text.split(/\r?\n/).filter((line) => line.trim()).length;
+  const numbers = [...text.matchAll(/-?\d+(?:[\s.,]\d+)*/g)].slice(0, 40).map((item) => toNumber(item[0]) ?? 0);
+  const total = round(numbers.reduce((sum, value) => sum + value, 0));
+  const findings: Finding[] = [];
+
+  if (text.length < 80) {
+    findings.push(documentFinding("DOCUMENT_TOO_SHORT", "low", "Документ слишком короткий", "В файле мало текста для надежного анализа.", "Проверьте, что загружен полный документ."));
+  }
+  if (/скидк|discount/i.test(text)) {
+    findings.push(documentFinding("DISCOUNT_MENTIONED", "medium", "Есть скидки", "Документ содержит упоминания скидок.", "Сверьте основания скидок с акциями и разрешениями."));
+  }
+  if (/возврат|refund|return/i.test(text)) {
+    findings.push(documentFinding("RETURN_MENTIONED", "medium", "Есть возвраты", "Документ содержит возвраты или refund.", "Проверьте даты, чеки и причины возвратов."));
+  }
+  if (/расход|expense|затрат/i.test(text)) {
+    findings.push(documentFinding("EXPENSE_MENTIONED", "medium", "Есть расходы", "Документ содержит расходы.", "Сравните расходы с бюджетом месяца."));
+  }
+
+  const riskScore = scoreRisk(findings);
+  return {
+    id: `local-${crypto.randomUUID()}`,
+    file_name: file.name,
+    status: "completed-local",
+    risk_score: riskScore,
+    risk_level: riskLevel(riskScore),
+    total_findings: findings.length,
+    summary: `Документ распознан как текстовый файл. Найдено строк: ${rows}, числовых значений: ${numbers.length}. Первичная сумма найденных чисел: ${total}.`,
+    recommendations: buildRecommendations(findings),
+    workbook_profile: {
+      quality_score: Math.max(0, 100 - riskScore),
+      sheet_count: 1,
+      metric_totals: { sales: 0, profit: 0, salary: 0, bonus: 0, expense: 0, discount: 0, return: 0 },
+      sheets: [
+        {
+          name: "Текст документа",
+          rows_sampled: rows,
+          columns_sampled: 1,
+          non_empty_cells_sampled: rows,
+          numeric_columns_sampled: numbers.length ? 1 : 0,
+          metric_totals: {},
+        },
+      ],
+    },
+    findings,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function buildGeminiDocumentReport(file: File, text: string): AuditReport {
+  const findings = [documentFinding("GEMINI_DOCUMENT_ANALYSIS", "info", "Gemini распознал документ", text, "Используйте вывод Gemini как основу и сверяйте важные суммы с первичным документом.")];
+  return {
+    id: `local-${crypto.randomUUID()}`,
+    file_name: file.name,
+    status: "completed-gemini",
+    risk_score: 12,
+    risk_level: "low",
+    total_findings: findings.length,
+    summary: text,
+    recommendations: ["Проверьте ключевые суммы, даты, скидки, возвраты и расходы по первичному документу.", "Задайте вопрос в Gemini-чате по этому документу."],
+    workbook_profile: {
+      quality_score: 88,
+      sheet_count: 1,
+      metric_totals: { sales: 0, profit: 0, salary: 0, bonus: 0, expense: 0, discount: 0, return: 0 },
+      sheets: [{ name: "Gemini OCR", rows_sampled: 1, columns_sampled: 1, non_empty_cells_sampled: 1, numeric_columns_sampled: 0, metric_totals: {} }],
+    },
+    findings,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function buildUnsupportedDocumentReport(file: File): AuditReport {
+  const finding = documentFinding(
+    "DOCUMENT_RECOGNITION_PENDING",
+    "medium",
+    "Файл принят, но текст не извлечен",
+    `Тип ${file.type || "не указан"}, размер ${Math.round(file.size / 1024)} КБ. Для глубокого распознавания нужен доступный Gemini Edge Function.`,
+    "Проверьте секрет GEMINI_API_KEY/GEMINI_MODEL и повторите загрузку или конвертируйте документ в PDF, CSV, XLSX или TXT.",
+  );
+  return {
+    id: `local-${crypto.randomUUID()}`,
+    file_name: file.name,
+    status: "metadata-only",
+    risk_score: 20,
+    risk_level: "medium",
+    total_findings: 1,
+    summary: "Файл загружен и сохранен в интерфейсе, но содержимое не удалось распознать локально.",
+    recommendations: [finding.suggested_fix],
+    workbook_profile: {
+      quality_score: 80,
+      sheet_count: 1,
+      metric_totals: { sales: 0, profit: 0, salary: 0, bonus: 0, expense: 0, discount: 0, return: 0 },
+      sheets: [{ name: "Метаданные", rows_sampled: 1, columns_sampled: 1, non_empty_cells_sampled: 1, numeric_columns_sampled: 0, metric_totals: {} }],
+    },
+    findings: [finding],
+    created_at: new Date().toISOString(),
+  };
+}
+
+function documentFinding(code: string, severity: Severity, title: string, description: string, suggestedFix: string): Finding {
+  return {
+    code,
+    severity,
+    sheet_name: "Документ",
+    cell: null,
+    row_number: null,
+    column_name: null,
+    title,
+    description,
+    suggested_fix: suggestedFix,
+    evidence: {},
+  };
+}
+
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function guessMimeType(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".txt") || lower.endsWith(".csv")) return "text/plain";
+  return "application/octet-stream";
 }

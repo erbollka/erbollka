@@ -84,13 +84,13 @@ export async function uploadAudit(file: File, storeId: string, periodMonth: stri
       body: data,
     });
   } catch {
-    const { analyzeExcelInBrowser } = await import("./clientAudit");
-    return analyzeExcelInBrowser(file);
+    const { analyzeDocumentInBrowser } = await import("./clientAudit");
+    return analyzeDocumentInBrowser(file);
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || "Не удалось проверить файл");
+    const { analyzeDocumentInBrowser } = await import("./clientAudit");
+    return analyzeDocumentInBrowser(file);
   }
 
   return response.json();
