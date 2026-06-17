@@ -48,7 +48,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -228,6 +229,17 @@ input {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0 12px;
+  color: var(--ink);
+  background: var(--cell-cream);
+}
+
+textarea {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
   color: var(--ink);
   background: var(--cell-cream);
 }
@@ -460,6 +472,14 @@ input {
   grid-template-columns: 1fr auto;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.large-chat {
+  align-items: start;
+}
+
+.chat-panel .chat-answer {
+  margin-top: 14px;
 }
 
 .chat-answer {

@@ -14,7 +14,7 @@ import { BrandLogo } from "./components/BrandLogo";
 import { demoComparison, demoReport } from "./lib/demoReport";
 import "./index.css";
 
-type Page = "kpi" | "audits" | "stats";
+type Page = "kpi" | "audits" | "stats" | "chat";
 
 const severityLabel: Record<Severity, string> = {
   info: "Инфо",
@@ -71,7 +71,7 @@ export default function App() {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [comparison, setComparison] = useState<ReportComparison | null>(null);
   const [history, setHistory] = useState<AuditReport[]>([]);
-  const [question, setQuestion] = useState("Что важнее проверить в этом документе?");
+  const [question, setQuestion] = useState("Помоги мне придумать план роста магазина на неделю");
   const [chatAnswer, setChatAnswer] = useState<ChatResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -93,7 +93,6 @@ export default function App() {
   useEffect(() => {
     if (!report) {
       setComparison(null);
-      setChatAnswer(null);
       return;
     }
     if (report.id === demoReport.id) {
@@ -140,13 +139,7 @@ export default function App() {
   async function askGemini(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!question.trim()) return;
-    const localAnswer = report
-      ? buildLocalReportAnswer(report, question.trim())
-      : {
-          used_ai: false,
-          answer:
-            "Gemini сейчас получит вопрос без загруженного документа. Для точного ответа по цифрам загрузите отчет, а пока я могу отвечать как retail-помощник по KPI, продажам, аудиту и документам.",
-        };
+    const localAnswer = buildLocalChatFallback(report, question.trim());
     setChatAnswer(localAnswer);
     setIsChatLoading(true);
 
@@ -156,10 +149,8 @@ export default function App() {
         supabase.functions.invoke("ai", {
           body: {
             system:
-              "Ты Gemini AI-аудитор и помощник владельца fashion retail. Отвечай по-русски, коротко и по делу. Используй только переданные данные документа, KPI и findings. Не придумывай числа.",
-            prompt: report
-              ? buildGeminiReportPrompt(report, question.trim())
-              : `Ответь владельцу магазина одежды на вопрос. Если для точного ответа нужен файл или цифры, прямо скажи, какие документы загрузить. Вопрос: ${question.trim()}`,
+              "Ты универсальный Gemini-помощник для владельца бизнеса. Отвечай по-русски, понятно и полезно. Можно отвечать на любые вопросы: бизнес, учеба, идеи, тексты, планы, документы, анализ, бытовые задачи. Если есть контекст отчета магазина, используй его только когда он помогает, но не ограничивайся им.",
+            prompt: buildGeneralGeminiPrompt(report, question.trim()),
           },
         }),
         10000,
@@ -201,6 +192,7 @@ export default function App() {
         <TabButton active={page === "kpi"} onClick={() => setPage("kpi")} label="KPI" />
         <TabButton active={page === "audits"} onClick={() => setPage("audits")} label="Аудиты и документы" />
         <TabButton active={page === "stats"} onClick={() => setPage("stats")} label="Статистика по месяцам" />
+        <TabButton active={page === "chat"} onClick={() => setPage("chat")} label="Gemini чат" />
       </nav>
 
       <section className="workspace">
@@ -244,16 +236,21 @@ export default function App() {
             <AuditsPage
               report={report}
               isDemoReport={isDemoReport}
-              question={question}
-              setQuestion={setQuestion}
-              askGemini={askGemini}
-              chatAnswer={chatAnswer}
-              isChatLoading={isChatLoading}
               history={history}
               selectReport={setReport}
             />
           ) : null}
           {page === "stats" ? <StatsPage report={report} comparison={comparison} rows={monthlyRows} /> : null}
+          {page === "chat" ? (
+            <ChatPage
+              report={report}
+              question={question}
+              setQuestion={setQuestion}
+              askGemini={askGemini}
+              chatAnswer={chatAnswer}
+              isChatLoading={isChatLoading}
+            />
+          ) : null}
         </section>
       </section>
     </main>
@@ -300,21 +297,11 @@ function KpiPage({
 function AuditsPage({
   report,
   isDemoReport,
-  question,
-  setQuestion,
-  askGemini,
-  chatAnswer,
-  isChatLoading,
   history,
   selectReport,
 }: {
   report: AuditReport | null;
   isDemoReport: boolean;
-  question: string;
-  setQuestion: (value: string) => void;
-  askGemini: (event: FormEvent<HTMLFormElement>) => void;
-  chatAnswer: ChatResponse | null;
-  isChatLoading: boolean;
   history: AuditReport[];
   selectReport: (report: AuditReport) => void;
 }) {
@@ -343,24 +330,6 @@ function AuditsPage({
           </div>
         ) : (
           <p className="muted">Загрузите документ или откройте демо, чтобы увидеть аудит.</p>
-        )}
-      </section>
-
-      <section className="panel">
-        <h2>Gemini-чат по документу</h2>
-        <form className="chat-form" onSubmit={askGemini}>
-          <input value={question} onChange={(event) => setQuestion(event.target.value)} />
-          <button className="button compact" disabled={isChatLoading || !question.trim()}>
-            {isChatLoading ? "Gemini думает..." : "Спросить"}
-          </button>
-        </form>
-        {chatAnswer ? (
-          <div className="chat-answer">
-            <span>{chatAnswer.used_ai ? "Gemini" : "Локальный ответ"}</span>
-            <p>{chatAnswer.answer}</p>
-          </div>
-        ) : (
-          <p className="muted">Например: “где риск по скидкам?”, “что проверить первым?”, “почему прибыль ниже?”.</p>
         )}
       </section>
 
@@ -410,6 +379,54 @@ function AuditsPage({
           ))}
           {!history.length ? <p className="muted">История появится после первой проверки.</p> : null}
         </div>
+      </section>
+    </div>
+  );
+}
+
+function ChatPage({
+  report,
+  question,
+  setQuestion,
+  askGemini,
+  chatAnswer,
+  isChatLoading,
+}: {
+  report: AuditReport | null;
+  question: string;
+  setQuestion: (value: string) => void;
+  askGemini: (event: FormEvent<HTMLFormElement>) => void;
+  chatAnswer: ChatResponse | null;
+  isChatLoading: boolean;
+}) {
+  return (
+    <div className="page-stack">
+      <section className="panel chat-panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Gemini AI</p>
+            <h2>Чат для любых вопросов</h2>
+          </div>
+          <span className="soft-pill">{report ? "Есть контекст отчета" : "Общий режим"}</span>
+        </div>
+        <form className="chat-form large-chat" onSubmit={askGemini}>
+          <textarea
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="Спросите что угодно: бизнес, идеи, тексты, анализ, обучение, планы, документы..."
+          />
+          <button className="button compact" disabled={isChatLoading || !question.trim()}>
+            {isChatLoading ? "Gemini думает..." : "Спросить"}
+          </button>
+        </form>
+        {chatAnswer ? (
+          <div className="chat-answer">
+            <span>{chatAnswer.used_ai ? "Gemini" : "Ожидание Gemini"}</span>
+            <p>{chatAnswer.answer}</p>
+          </div>
+        ) : (
+          <p className="muted">Этот чат не привязан к документам. Если отчет загружен, Gemini может учитывать его, но отвечать будет на любые вопросы.</p>
+        )}
       </section>
     </div>
   );
@@ -548,7 +565,14 @@ function formatNumber(value: number) {
   return Math.abs(value) >= 1000 ? formatMoney(value) : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value);
 }
 
-function buildLocalReportAnswer(report: AuditReport, question: string): ChatResponse {
+function buildLocalChatFallback(report: AuditReport | null, question: string): ChatResponse {
+  if (!report) {
+    return {
+      used_ai: false,
+      answer: "Отправляю вопрос в Gemini. Если ответ не появится, проверьте Supabase Edge Function и ключ Gemini.",
+    };
+  }
+
   const totals = report.workbook_profile?.metric_totals ?? {};
   const topFindings = prioritizeFindings(report.findings);
   return {
@@ -562,8 +586,12 @@ function buildLocalReportAnswer(report: AuditReport, question: string): ChatResp
   };
 }
 
-function buildGeminiReportPrompt(report: AuditReport, question: string) {
-  const payload = {
+function buildGeneralGeminiPrompt(report: AuditReport | null, question: string) {
+  if (!report) {
+    return `Вопрос пользователя: ${question}`;
+  }
+
+  const reportContext = {
     question,
     file_name: report.file_name,
     risk_score: report.risk_score,
@@ -581,7 +609,11 @@ function buildGeminiReportPrompt(report: AuditReport, question: string) {
       suggested_fix: item.suggested_fix,
     })),
   };
-  return `Ответь на вопрос владельца магазина по этому документу. Данные:\n${JSON.stringify(payload, null, 2)}`;
+  return [
+    `Вопрос пользователя: ${question}`,
+    "Ниже есть дополнительный контекст загруженного отчета. Используй его только если он реально помогает ответу.",
+    JSON.stringify(reportContext, null, 2),
+  ].join("\n\n");
 }
 
 function prioritizeFindings(findings: Finding[]) {
