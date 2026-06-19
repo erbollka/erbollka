@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { User } from "@supabase/supabase-js";
 import {
   AuditReport,
   ChatResponse,
@@ -12,9 +13,25 @@ import {
 } from "./lib/api";
 import { BrandLogo } from "./components/BrandLogo";
 import { demoComparison, demoReport } from "./lib/demoReport";
+import { supabase } from "./lib/supabase";
 import "./index.css";
 
 type Page = "kpi" | "audits" | "stats" | "chat";
+type AuthMode = "signin" | "signup";
+
+type ChatPhoto = {
+  name: string;
+  mimeType: string;
+  data: string;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  imageUrl?: string;
+  photos?: Array<{ name: string; url: string }>;
+};
 
 const severityLabel: Record<Severity, string> = {
   info: "Инфо",
@@ -41,6 +58,9 @@ const kpiLabels: Record<string, string> = {
   return: "Возвраты",
 };
 
+const mainKpiKeys = ["sales", "profit", "expense", "return"];
+const visibleFindingsLimit = 5;
+
 const acceptDocuments = [
   ".xlsx",
   ".xls",
@@ -64,6 +84,10 @@ const acceptDocuments = [
 ].join(",");
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isCloudDataReady, setIsCloudDataReady] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>("signin");
   const [page, setPage] = useState<Page>("kpi");
   const [file, setFile] = useState<File | null>(null);
   const [storeId, setStoreId] = useState("00000000-0000-0000-0000-000000000001");
@@ -71,8 +95,11 @@ export default function App() {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [comparison, setComparison] = useState<ReportComparison | null>(null);
   const [history, setHistory] = useState<AuditReport[]>([]);
-  const [question, setQuestion] = useState("Помоги мне придумать план роста магазина на неделю");
+  const [question, setQuestion] = useState("Дай короткий план роста магазина на неделю");
   const [chatAnswer, setChatAnswer] = useState<ChatResponse | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => readStoredChatMessages());
+  const [personalInfo, setPersonalInfo] = useState(() => localStorage.getItem("erbollka_personal_info") ?? "");
+  const [attachedPhotos, setAttachedPhotos] = useState<ChatPhoto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,8 +114,63 @@ export default function App() {
     ).length ?? 0;
 
   useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
+      setIsAuthReady(true);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setIsAuthReady(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setIsCloudDataReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsCloudDataReady(false);
+
+    loadUserDataFromSupabase(user).then((data) => {
+      if (cancelled) return;
+      if (data.personalInfo !== null) {
+        setPersonalInfo(data.personalInfo);
+      }
+      if (data.messages !== null) {
+        setChatMessages(data.messages);
+      }
+      setIsCloudDataReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
     fetchHistory().then(setHistory).catch(() => setHistory([]));
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("erbollka_chat_messages", JSON.stringify(chatMessages.slice(-30)));
+  }, [chatMessages]);
+
+  useEffect(() => {
+    localStorage.setItem("erbollka_personal_info", personalInfo);
+  }, [personalInfo]);
+
+  useEffect(() => {
+    if (!user || !isCloudDataReady) return;
+    savePersonalInfoToSupabase(user.id, personalInfo);
+  }, [user, isCloudDataReady, personalInfo]);
+
+  useEffect(() => {
+    if (!user || !isCloudDataReady) return;
+    saveChatMessagesToSupabase(user.id, chatMessages);
+  }, [user, isCloudDataReady, chatMessages]);
 
   useEffect(() => {
     if (!report) {
@@ -136,10 +218,24 @@ export default function App() {
     setPage("audits");
   }
 
-  async function askGemini(event: FormEvent<HTMLFormElement>) {
+  async function askGemini(event: { preventDefault: () => void }, mode: "chat" | "image" = "chat") {
     event.preventDefault();
     if (!question.trim()) return;
-    const localAnswer = buildLocalChatFallback(report, question.trim());
+    const currentQuestion = question.trim();
+    const currentPhotos = attachedPhotos;
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      text: currentQuestion,
+      photos: currentPhotos.map((photo) => ({
+        name: photo.name,
+        url: `data:${photo.mimeType};base64,${photo.data}`,
+      })),
+    };
+    setChatMessages((items) => [...items, userMessage]);
+    setQuestion("");
+    setAttachedPhotos([]);
+    const localAnswer = buildLocalChatFallback(report, currentQuestion);
     setChatAnswer(localAnswer);
     setIsChatLoading(true);
 
@@ -148,21 +244,54 @@ export default function App() {
       const { data, error } = await withTimeout(
         supabase.functions.invoke("ai", {
           body: {
+            mode,
             system:
-              "Ты универсальный Gemini-помощник для владельца бизнеса. Отвечай по-русски, понятно и полезно. Можно отвечать на любые вопросы: бизнес, учеба, идеи, тексты, планы, документы, анализ, бытовые задачи. Если есть контекст отчета магазина, используй его только когда он помогает, но не ограничивайся им.",
-            prompt: buildGeneralGeminiPrompt(report, question.trim()),
+              "Ты Gemini-помощник для владельца бизнеса. Отвечай по-русски по делу, но чуть подробнее: до 6 пунктов или 6 небольших абзацев. Без длинного вступления и воды. Давай конкретный вывод, причины и действия.",
+            prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, chatMessages),
+            files: currentPhotos.map(({ mimeType, data }) => ({ mimeType, data })),
           },
         }),
-        10000,
+        mode === "image" ? 30000 : 12000,
       );
-      if (!error && typeof data?.text === "string" && data.text.trim()) {
-        setChatAnswer({ answer: data.text.trim(), used_ai: true });
+      if (!error && (typeof data?.text === "string" || typeof data?.image === "string")) {
+        const answer = mode === "image" ? data?.text?.trim() || "Готово." : compactAiAnswer(data.text);
+        setChatAnswer({ answer, used_ai: true });
+        setChatMessages((items) => [
+          ...items,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            text: answer,
+            imageUrl: typeof data?.image === "string" ? data.image : undefined,
+          },
+        ]);
       }
     } catch {
-      // Local answer is already visible.
+      setChatMessages((items) => [
+        ...items,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          text: localAnswer.answer,
+        },
+      ]);
     } finally {
       setIsChatLoading(false);
     }
+  }
+
+  if (!isAuthReady) {
+    return (
+      <main className="landing-page">
+        <div className="landing-topbar">
+          <BrandLogo />
+        </div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return <LandingPage mode={authMode} setMode={setAuthMode} />;
   }
 
   return (
@@ -171,12 +300,18 @@ export default function App() {
         <div className="header-copy">
           <BrandLogo />
           <p className="eyebrow">Fashion retail workspace</p>
-          <h1>Управление магазином: KPI, аудиты, статистика</h1>
+          <h1>Магазин: KPI и аудит</h1>
           <p className="subtitle">
-            Загружайте отчеты и документы, проверяйте риски, сравнивайте месяцы и задавайте вопросы Gemini по данным магазина.
+            Проверяйте отчеты, риски и короткие подсказки Gemini.
           </p>
         </div>
         <div className="header-actions">
+          <div className="user-chip">
+            <span>{user.user_metadata?.full_name || user.email}</span>
+            <button type="button" onClick={() => supabase.auth.signOut()}>
+              Выйти
+            </button>
+          </div>
           {report && !isDemoReport ? (
             <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
               PDF
@@ -190,9 +325,9 @@ export default function App() {
 
       <nav className="page-tabs" aria-label="Разделы">
         <TabButton active={page === "kpi"} onClick={() => setPage("kpi")} label="KPI" />
-        <TabButton active={page === "audits"} onClick={() => setPage("audits")} label="Аудиты и документы" />
-        <TabButton active={page === "stats"} onClick={() => setPage("stats")} label="Статистика по месяцам" />
-        <TabButton active={page === "chat"} onClick={() => setPage("chat")} label="Gemini чат" />
+        <TabButton active={page === "audits"} onClick={() => setPage("audits")} label="Аудит" />
+        <TabButton active={page === "stats"} onClick={() => setPage("stats")} label="Статистика" />
+        <TabButton active={page === "chat"} onClick={() => setPage("chat")} label="Чат" />
       </nav>
 
       <section className="workspace">
@@ -249,11 +384,151 @@ export default function App() {
               askGemini={askGemini}
               chatAnswer={chatAnswer}
               isChatLoading={isChatLoading}
+              messages={chatMessages}
+              personalInfo={personalInfo}
+              setPersonalInfo={setPersonalInfo}
+              attachedPhotos={attachedPhotos}
+              setAttachedPhotos={setAttachedPhotos}
+              clearChat={() => {
+                setChatMessages([]);
+                setChatAnswer(null);
+              }}
             />
           ) : null}
         </section>
       </section>
     </main>
+  );
+}
+
+function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode) => void }) {
+  return (
+    <main className="landing-page">
+      <header className="landing-topbar">
+        <BrandLogo />
+        <div className="landing-auth-actions">
+          <button className={mode === "signup" ? "button" : "button secondary"} type="button" onClick={() => setMode("signup")}>
+            Зарегистрироваться
+          </button>
+          <button className={mode === "signin" ? "button" : "button secondary"} type="button" onClick={() => setMode("signin")}>
+            Войти
+          </button>
+        </div>
+      </header>
+
+      <section className="landing-hero">
+        <div className="landing-copy">
+          <p className="eyebrow">AI workspace для fashion retail</p>
+          <h1>Контроль магазина, отчетов и рисков в одном dashboard</h1>
+          <p className="subtitle">
+            Erbollka помогает загружать отчеты, видеть KPI, находить ошибки в документах, сравнивать месяцы и общаться с Gemini по данным магазина.
+          </p>
+          <div className="landing-points">
+            <div>
+              <strong>Аудит документов</strong>
+              <span>Excel, CSV, PDF, изображения и другие файлы.</span>
+            </div>
+            <div>
+              <strong>KPI и статистика</strong>
+              <span>Продажи, прибыль, расходы, возвраты и динамика.</span>
+            </div>
+            <div>
+              <strong>Gemini чат</strong>
+              <span>Короткие ответы, память, фото и идеи для роста.</span>
+            </div>
+          </div>
+        </div>
+
+        <AuthPanel mode={mode} setMode={setMode} />
+      </section>
+    </main>
+  );
+}
+
+function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [storeName, setStoreName] = useState("");
+  const [message, setMessage] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const result =
+        mode === "signup"
+          ? await supabase.auth.signUp({
+              email,
+              password,
+              options: {
+                data: {
+                  full_name: fullName.trim(),
+                  store_name: storeName.trim(),
+                },
+              },
+            })
+          : await supabase.auth.signInWithPassword({ email, password });
+
+      if (result.error) {
+        setMessage(result.error.message);
+      } else if (mode === "signup" && !result.data.session) {
+        setMessage("Аккаунт создан. Проверьте почту для подтверждения входа.");
+      } else if (result.data.user) {
+        await saveProfileToSupabase(result.data.user, fullName, storeName);
+      }
+    } catch {
+      setMessage("Не удалось выполнить действие. Попробуйте еще раз.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  return (
+    <section className="auth-panel">
+      <div>
+        <p className="eyebrow">{mode === "signin" ? "Вход" : "Регистрация"}</p>
+        <h2>{mode === "signin" ? "Вернуться в dashboard" : "Создать аккаунт"}</h2>
+      </div>
+      <form className="form" onSubmit={onSubmit}>
+        {mode === "signup" ? (
+          <>
+            <label>
+              Имя
+              <input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Альмира" />
+            </label>
+            <label>
+              Магазин
+              <input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Название магазина" />
+            </label>
+          </>
+        ) : null}
+        <label>
+          Email
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@email.com" required />
+        </label>
+        <label>
+          Пароль
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Минимум 6 символов"
+            minLength={6}
+            required
+          />
+        </label>
+        {message ? <p className="error">{message}</p> : null}
+        <button className="button" disabled={isBusy}>
+          {isBusy ? "Подождите..." : mode === "signin" ? "Войти" : "Зарегистрироваться"}
+        </button>
+      </form>
+      <button className="auth-switch" type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>
+        {mode === "signin" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти"}
+      </button>
+    </section>
   );
 }
 
@@ -285,8 +560,8 @@ function KpiPage({
           <span className="soft-pill">{report ? report.file_name : "Нет файла"}</span>
         </div>
         <div className="kpi-grid">
-          {Object.entries(kpiLabels).map(([key, label]) => (
-            <KpiBar key={key} label={label} value={Number(totals[key] ?? 0)} max={maxKpi(totals)} />
+          {mainKpiKeys.map((key) => (
+            <KpiBar key={key} label={kpiLabels[key]} value={Number(totals[key] ?? 0)} max={maxKpi(totals)} />
           ))}
         </div>
       </section>
@@ -305,6 +580,13 @@ function AuditsPage({
   history: AuditReport[];
   selectReport: (report: AuditReport) => void;
 }) {
+  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  const visibleFindings = useMemo(() => prioritizeFindings(report?.findings ?? []).slice(0, visibleFindingsLimit), [report]);
+
+  useEffect(() => {
+    setSelectedFinding(visibleFindings[0] ?? null);
+  }, [report?.id, visibleFindings]);
+
   return (
     <div className="page-stack">
       <section className="panel">
@@ -334,7 +616,14 @@ function AuditsPage({
       </section>
 
       <section className="panel">
-        <h2>Найденные проблемы</h2>
+        <div className="panel-head">
+          <h2>Главные проблемы</h2>
+          {report?.findings.length ? (
+            <span className="soft-pill">
+              {visibleFindings.length} из {report.findings.length}
+            </span>
+          ) : null}
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -347,8 +636,21 @@ function AuditsPage({
               </tr>
             </thead>
             <tbody>
-              {(report?.findings ?? []).map((finding, index) => (
-                <tr key={`${finding.code}-${index}`}>
+              {visibleFindings.map((finding, index) => (
+                <tr
+                  className="clickable-row"
+                  key={`${finding.code}-${index}`}
+                  onClick={() => setSelectedFinding(finding)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedFinding(finding);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Открыть проблему: ${finding.title}`}
+                >
                   <td>{severityLabel[finding.severity]}</td>
                   <td>{finding.sheet_name}</td>
                   <td>{finding.cell ?? "-"}</td>
@@ -366,6 +668,35 @@ function AuditsPage({
             </tbody>
           </table>
         </div>
+        <div className="finding-cards">
+          {visibleFindings.map((finding, index) => (
+            <button
+              className="finding-card"
+              type="button"
+              key={`${finding.code}-card-${index}`}
+              onClick={() => setSelectedFinding(finding)}
+            >
+              <span>{severityLabel[finding.severity]}</span>
+              <strong>{finding.title}</strong>
+              <small>
+                {finding.sheet_name}
+                {finding.cell ? `, ${finding.cell}` : ""}
+              </small>
+            </button>
+          ))}
+          {!report?.findings.length ? <p className="muted">Пока нет данных аудита.</p> : null}
+        </div>
+        {selectedFinding ? (
+          <div className="finding-detail">
+            <strong>{selectedFinding.title}</strong>
+            <span>
+              {selectedFinding.sheet_name}
+              {selectedFinding.cell ? `, ${selectedFinding.cell}` : ""}
+            </span>
+            <p>{selectedFinding.description}</p>
+            <p>{selectedFinding.suggested_fix}</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -391,34 +722,143 @@ function ChatPage({
   askGemini,
   chatAnswer,
   isChatLoading,
+  messages,
+  personalInfo,
+  setPersonalInfo,
+  attachedPhotos,
+  setAttachedPhotos,
+  clearChat,
 }: {
   report: AuditReport | null;
   question: string;
   setQuestion: (value: string) => void;
-  askGemini: (event: FormEvent<HTMLFormElement>) => void;
+  askGemini: (event: { preventDefault: () => void }, mode?: "chat" | "image") => void;
   chatAnswer: ChatResponse | null;
   isChatLoading: boolean;
+  messages: ChatMessage[];
+  personalInfo: string;
+  setPersonalInfo: (value: string) => void;
+  attachedPhotos: ChatPhoto[];
+  setAttachedPhotos: (value: ChatPhoto[]) => void;
+  clearChat: () => void;
 }) {
+  const [isToolsOpen, setIsToolsOpen] = useState(false);
+
+  async function onPhotoChange(files: FileList | null) {
+    if (!files?.length) return;
+    const photos = await Promise.all(Array.from(files).slice(0, 3).map(fileToChatPhoto));
+    setAttachedPhotos([...attachedPhotos, ...photos].slice(0, 3));
+    setIsToolsOpen(false);
+  }
+
   return (
-    <div className="page-stack">
-      <section className="panel chat-panel">
-        <div className="panel-head">
+    <div className="chat-home">
+      <section className="chat-panel">
+        <div className="chat-hero">
           <div>
             <p className="eyebrow">Gemini AI</p>
-            <h2>Чат для любых вопросов</h2>
+            <h2>Чем помочь?</h2>
           </div>
-          <span className="soft-pill">{report ? "Есть контекст отчета" : "Общий режим"}</span>
+          <div className="chat-hero-actions">
+            <span className="soft-pill">{report ? "Есть контекст отчета" : "Общий режим"}</span>
+            <button className="new-chat-button" type="button" onClick={clearChat} aria-label="Новый чат" title="Новый чат">
+              <span className="new-chat-icon" aria-hidden="true" />
+            </button>
+          </div>
         </div>
-        <form className="chat-form large-chat" onSubmit={askGemini}>
+
+        <div className="chat-thread">
+          {messages.map((message) => (
+            <div className={message.role === "user" ? "chat-bubble user" : "chat-bubble assistant"} key={message.id}>
+              <span>{message.role === "user" ? "Вы" : "Gemini"}</span>
+              <p>{message.text}</p>
+              {message.photos?.length ? (
+                <div className="chat-photo-grid">
+                  {message.photos.map((photo) => (
+                    <img src={photo.url} alt={photo.name} key={photo.url} />
+                  ))}
+                </div>
+              ) : null}
+              {message.imageUrl ? <img className="generated-image" src={message.imageUrl} alt="Сгенерированное Gemini изображение" /> : null}
+            </div>
+          ))}
+          {!messages.length ? (
+            <div className="chat-empty">
+              <strong>Спросите про отчет, продажи, идеи или фото</strong>
+              <span>Enter отправляет сообщение. Shift+Enter переносит строку.</span>
+            </div>
+          ) : null}
+        </div>
+
+        {attachedPhotos.length ? (
+          <div className="attached-photos">
+            {attachedPhotos.map((photo) => (
+              <span key={`${photo.name}-${photo.data.slice(0, 12)}`}>{photo.name}</span>
+            ))}
+          </div>
+        ) : null}
+
+        <form className="chat-composer" onSubmit={(event) => askGemini(event, "chat")}>
           <textarea
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Спросите что угодно: бизнес, идеи, тексты, анализ, обучение, планы, документы..."
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                if (!isChatLoading && question.trim()) {
+                  askGemini(event, "chat");
+                }
+              }
+            }}
+            placeholder="Спросите Gemini..."
+            rows={1}
           />
-          <button className="button compact" disabled={isChatLoading || !question.trim()}>
-            {isChatLoading ? "Gemini думает..." : "Спросить"}
-          </button>
+          <div className="composer-actions">
+            <div className="composer-tools">
+              <button
+                className="plus-button"
+                type="button"
+                aria-label="Открыть функции"
+                aria-expanded={isToolsOpen}
+                onClick={() => setIsToolsOpen((value) => !value)}
+              >
+                +
+              </button>
+              {isToolsOpen ? (
+                <div className="tools-menu">
+                  <label className="tools-menu-item">
+                    Фото
+                    <input type="file" accept="image/*" multiple onChange={(event) => onPhotoChange(event.target.files)} />
+                  </label>
+                  <button
+                    className="tools-menu-item"
+                    disabled={isChatLoading || !question.trim()}
+                    type="button"
+                    onClick={(event) => {
+                      setIsToolsOpen(false);
+                      askGemini(event, "image");
+                    }}
+                  >
+                    Фото AI
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <button className="send-button" disabled={isChatLoading || !question.trim()} aria-label="Отправить">
+              {isChatLoading ? "..." : "↑"}
+            </button>
+          </div>
         </form>
+
+        <label className="memory-box compact-memory">
+          <span>Память</span>
+          <textarea
+            value={personalInfo}
+            onChange={(event) => setPersonalInfo(event.target.value)}
+            placeholder="Имя, магазин, город, стиль ответа..."
+          />
+        </label>
+
         {chatAnswer ? (
           <div className="chat-answer">
             <span>{chatAnswer.used_ai ? "Gemini" : "Ожидание Gemini"}</span>
@@ -569,7 +1009,7 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   if (!report) {
     return {
       used_ai: false,
-      answer: "Отправляю вопрос в Gemini. Если ответ не появится, проверьте Supabase Edge Function и ключ Gemini.",
+      answer: "Жду Gemini. Если ответа нет, проверьте Edge Function и ключ Gemini.",
     };
   }
 
@@ -578,17 +1018,21 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   return {
     used_ai: false,
     answer: [
-      `Отвечаю по загруженному документу: ${report.file_name}. Риск: ${riskLabel[report.risk_level] ?? report.risk_level}, замечаний: ${report.total_findings}.`,
-      `Ключевые суммы: продажи ${formatMoney(Number(totals.sales ?? 0))}, прибыль ${formatMoney(Number(totals.profit ?? 0))}, расходы ${formatMoney(Number(totals.expense ?? 0))}, скидки ${formatMoney(Number(totals.discount ?? 0))}, возвраты ${formatMoney(Number(totals.return ?? 0))}.`,
-      topFindings[0] ? `Первое, что стоит проверить: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "Серьезных замечаний не найдено.",
+      `Риск: ${riskLabel[report.risk_level] ?? report.risk_level}. Замечаний: ${report.total_findings}.`,
+      `Продажи: ${formatMoney(Number(totals.sales ?? 0))}. Прибыль: ${formatMoney(Number(totals.profit ?? 0))}. Расходы: ${formatMoney(Number(totals.expense ?? 0))}.`,
+      topFindings[0] ? `Сначала проверьте: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "Серьезных замечаний нет.",
       `Вопрос: ${question}`,
     ].join(" "),
   };
 }
 
-function buildGeneralGeminiPrompt(report: AuditReport | null, question: string) {
+function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, personalInfo = "", messages: ChatMessage[] = []) {
+  const memory = personalInfo.trim() ? `Память о пользователе:\n${personalInfo.trim()}` : "";
+  const recentMessages = messages.slice(-8).map((item) => `${item.role === "user" ? "Пользователь" : "Gemini"}: ${item.text}`).join("\n");
+  const history = recentMessages ? `Последняя переписка:\n${recentMessages}` : "";
+
   if (!report) {
-    return `Вопрос пользователя: ${question}`;
+    return [memory, history, `Вопрос пользователя: ${question}`, "Ответь до 6 содержательных пунктов или небольших абзацев."].filter(Boolean).join("\n\n");
   }
 
   const reportContext = {
@@ -610,10 +1054,114 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string) 
     })),
   };
   return [
+    memory,
+    history,
     `Вопрос пользователя: ${question}`,
+    "Ответь до 6 содержательных пунктов или небольших абзацев. В каждом пункте дай конкретный вывод, причину или действие. Без длинного вступления.",
     "Ниже есть дополнительный контекст загруженного отчета. Используй его только если он реально помогает ответу.",
     JSON.stringify(reportContext, null, 2),
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
+}
+
+function compactAiAnswer(text: string) {
+  const lines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const compact = (lines.length > 1 ? lines.slice(0, 6).join("\n") : text.trim()).slice(0, 1200);
+  return compact.length < text.trim().length ? `${compact.replace(/[.,;:\s]+$/, "")}...` : compact;
+}
+
+function readStoredChatMessages(): ChatMessage[] {
+  try {
+    const value = localStorage.getItem("erbollka_chat_messages");
+    const parsed = value ? JSON.parse(value) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function fileToChatPhoto(file: File): Promise<ChatPhoto> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve({
+        name: file.name,
+        mimeType: file.type || "image/png",
+        data: value.includes(",") ? value.split(",")[1] : value,
+      });
+    };
+    reader.onerror = () => reject(new Error("Не удалось прочитать фото"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function loadUserDataFromSupabase(user: User): Promise<{ personalInfo: string | null; messages: ChatMessage[] | null }> {
+  await saveProfileToSupabase(
+    user,
+    typeof user.user_metadata?.full_name === "string" ? user.user_metadata.full_name : "",
+    typeof user.user_metadata?.store_name === "string" ? user.user_metadata.store_name : "",
+  );
+
+  const [memoryResult, messagesResult] = await Promise.all([
+    supabase.from("ai_memories").select("personal_info").eq("user_id", user.id).maybeSingle(),
+    supabase
+      .from("chat_messages")
+      .select("id, role, text, image_url, photos, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(30),
+  ]);
+
+  return {
+    personalInfo: memoryResult.error ? null : memoryResult.data?.personal_info ?? "",
+    messages: messagesResult.error
+      ? null
+      : (messagesResult.data ?? []).map((item) => ({
+          id: String(item.id),
+          role: item.role === "user" ? "user" : "assistant",
+          text: String(item.text ?? ""),
+          imageUrl: typeof item.image_url === "string" ? item.image_url : undefined,
+          photos: Array.isArray(item.photos) ? item.photos : [],
+        })),
+  };
+}
+
+async function saveProfileToSupabase(user: User, fullName = "", storeName = "") {
+  await supabase.from("profiles").upsert({
+    user_id: user.id,
+    email: user.email ?? "",
+    full_name: fullName || user.user_metadata?.full_name || null,
+    store_name: storeName || user.user_metadata?.store_name || null,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+async function savePersonalInfoToSupabase(userId: string, personalInfo: string) {
+  await supabase.from("ai_memories").upsert({
+    user_id: userId,
+    personal_info: personalInfo,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+async function saveChatMessagesToSupabase(userId: string, messages: ChatMessage[]) {
+  await supabase.from("chat_messages").delete().eq("user_id", userId);
+  const rows = messages.slice(-30).map((message, index) => ({
+    id: message.id,
+    user_id: userId,
+    role: message.role,
+    text: message.text,
+    image_url: message.imageUrl ?? null,
+    photos: message.photos ?? [],
+    created_at: new Date(Date.now() - (messages.length - index) * 1000).toISOString(),
+  }));
+  if (rows.length) {
+    await supabase.from("chat_messages").insert(rows);
+  }
 }
 
 function prioritizeFindings(findings: Finding[]) {
