@@ -623,18 +623,10 @@ textarea {
     box-shadow 160ms ease;
 }
 
-.google-auth-button span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.google-logo {
   width: 22px;
   height: 22px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: #4262ff;
-  background: #ffffff;
-  font-family: var(--number-font);
-  font-weight: 800;
+  flex: 0 0 auto;
 }
 
 .google-auth-button:hover {

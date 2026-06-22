@@ -713,7 +713,24 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
         <h2>{mode === "signin" ? "Войти в кабинет" : "Создать аккаунт"}</h2>
       </div>
       <button className="google-auth-button" type="button" onClick={signInWithGoogle} disabled={isBusy}>
-        <span aria-hidden="true">G</span>
+        <svg aria-hidden="true" className="google-logo" viewBox="0 0 24 24" focusable="false">
+          <path
+            fill="#4285F4"
+            d="M23.52 12.27c0-.82-.07-1.6-.2-2.36H12v4.47h6.47a5.53 5.53 0 0 1-2.4 3.63v2.96h3.89c2.27-2.1 3.56-5.18 3.56-8.7z"
+          />
+          <path
+            fill="#34A853"
+            d="M12 24c3.24 0 5.96-1.07 7.95-2.93l-3.89-2.96c-1.08.72-2.45 1.14-4.06 1.14-3.12 0-5.76-2.1-6.7-4.93H1.3v3.05A12 12 0 0 0 12 24z"
+          />
+          <path
+            fill="#FBBC05"
+            d="M5.3 14.32A7.2 7.2 0 0 1 4.93 12c0-.81.13-1.6.37-2.32V6.63H1.3A12 12 0 0 0 0 12c0 1.93.46 3.75 1.3 5.37l4-3.05z"
+          />
+          <path
+            fill="#EA4335"
+            d="M12 4.75c1.76 0 3.34.61 4.59 1.8l3.44-3.44A11.55 11.55 0 0 0 12 0 12 12 0 0 0 1.3 6.63l4 3.05C6.24 6.85 8.88 4.75 12 4.75z"
+          />
+        </svg>
         {isBusy ? "Подождите..." : mode === "signin" ? "Войти с Google" : "Зарегистрироваться с Google"}
       </button>
       <div className="auth-divider">
