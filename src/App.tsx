@@ -31,6 +31,15 @@ type ChatMessage = {
   text: string;
   imageUrl?: string;
   photos?: Array<{ name: string; url: string }>;
+  source?: "gemini" | "fallback";
+  model?: string;
+};
+
+type HistoryRiskFilter = "all" | "high" | "medium" | "low";
+type AiStatus = {
+  label: string;
+  tone: "idle" | "thinking" | "ready" | "fallback" | "error";
+  detail: string;
 };
 
 const severityLabel: Record<Severity, string> = {
@@ -60,6 +69,18 @@ const kpiLabels: Record<string, string> = {
 
 const mainKpiKeys = ["sales", "profit", "expense", "return"];
 const visibleFindingsLimit = 5;
+const chatPromptTemplates = [
+  "Что проверить в первую очередь?",
+  "Сделай план роста на неделю",
+  "Объясни риски простыми словами",
+  "Напиши сообщение сотруднику",
+  "Сравни с прошлым месяцем",
+];
+const idleAiStatus: AiStatus = {
+  label: "Gemini готов",
+  tone: "idle",
+  detail: "Ответы могут учитывать отчет, память и фото.",
+};
 
 const acceptDocuments = [
   ".xlsx",
@@ -100,6 +121,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => readStoredChatMessages());
   const [personalInfo, setPersonalInfo] = useState(() => localStorage.getItem("erbollka_personal_info") ?? "");
   const [attachedPhotos, setAttachedPhotos] = useState<ChatPhoto[]>([]);
+  const [aiStatus, setAiStatus] = useState<AiStatus>(idleAiStatus);
   const [isLoading, setIsLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,11 +190,6 @@ export default function App() {
   }, [user, isCloudDataReady, personalInfo]);
 
   useEffect(() => {
-    if (!user || !isCloudDataReady) return;
-    saveChatMessagesToSupabase(user.id, chatMessages);
-  }, [user, isCloudDataReady, chatMessages]);
-
-  useEffect(() => {
     if (!report) {
       setComparison(null);
       return;
@@ -233,50 +250,87 @@ export default function App() {
       })),
     };
     setChatMessages((items) => [...items, userMessage]);
+    if (user && isCloudDataReady) {
+      appendChatMessageToSupabase(user.id, userMessage);
+    }
     setQuestion("");
     setAttachedPhotos([]);
     const localAnswer = buildLocalChatFallback(report, currentQuestion);
     setChatAnswer(localAnswer);
+    setAiStatus({
+      label: "Gemini думает",
+      tone: "thinking",
+      detail: report ? "Учитываю отчет, память и последние сообщения." : "Учитываю память и последние сообщения.",
+    });
     setIsChatLoading(true);
 
     try {
-      const { supabase } = await import("./lib/supabase");
       const { data, error } = await withTimeout(
         supabase.functions.invoke("ai", {
           body: {
             mode,
             system:
-              "Ты Gemini-помощник для владельца бизнеса. Отвечай по-русски по делу, но чуть подробнее: до 6 пунктов или 6 небольших абзацев. Без длинного вступления и воды. Давай конкретный вывод, причины и действия.",
-            prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, chatMessages),
+              "Ты Gemini-помощник для владельца fashion retail бизнеса. Отвечай по-русски структурно и практично: сначала короткий вывод, затем причины и действия. До 6 пунктов или 6 небольших абзацев. Не выдумывай цифры, явно отделяй факт от предположения.",
+            prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, [...chatMessages, userMessage]),
             files: currentPhotos.map(({ mimeType, data }) => ({ mimeType, data })),
           },
         }),
-        mode === "image" ? 30000 : 12000,
+        mode === "image" ? 30000 : 18000,
       );
-      if (!error && (typeof data?.text === "string" || typeof data?.image === "string")) {
-        const answer = mode === "image" ? data?.text?.trim() || "Готово." : compactAiAnswer(data.text);
-        setChatAnswer({ answer, used_ai: true });
-        setChatMessages((items) => [
-          ...items,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            text: answer,
-            imageUrl: typeof data?.image === "string" ? data.image : undefined,
-          },
-        ]);
+      if (error) {
+        throw error;
       }
-    } catch {
-      setChatMessages((items) => [
-        ...items,
-        {
+      if (typeof data?.text === "string" || typeof data?.image === "string") {
+        const answer = mode === "image" ? data?.text?.trim() || "Готово." : compactAiAnswer(data.text);
+        const model = typeof data?.model === "string" ? data.model : "Gemini";
+        const assistantMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
-          text: localAnswer.answer,
-        },
-      ]);
+          text: answer,
+          imageUrl: typeof data?.image === "string" ? data.image : undefined,
+          source: "gemini",
+          model,
+        };
+        setChatAnswer({ answer, used_ai: true });
+        setAiStatus({
+          label: "Gemini ответил",
+          tone: "ready",
+          detail: `${model}${report ? " · учтен отчет" : " · общий режим"}${currentPhotos.length ? " · учтены фото" : ""}`,
+        });
+        setChatMessages((items) => [...items, assistantMessage]);
+        if (user && isCloudDataReady) {
+          appendChatMessageToSupabase(user.id, assistantMessage);
+        }
+      } else {
+        throw new Error("Gemini вернул пустой ответ");
+      }
+    } catch {
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: localAnswer.answer,
+        source: "fallback",
+      };
+      setAiStatus({
+        label: "Локальный ответ",
+        tone: "fallback",
+        detail: "Gemini не ответил вовремя, показан быстрый расчет по данным отчета.",
+      });
+      setChatMessages((items) => [...items, assistantMessage]);
+      if (user && isCloudDataReady) {
+        appendChatMessageToSupabase(user.id, assistantMessage);
+      }
     } finally {
       setIsChatLoading(false);
+    }
+  }
+
+  function clearChat() {
+    setChatMessages([]);
+    setChatAnswer(null);
+    setAiStatus(idleAiStatus);
+    if (user && isCloudDataReady) {
+      clearChatMessagesInSupabase(user.id);
     }
   }
 
@@ -299,10 +353,10 @@ export default function App() {
       <header className="app-header">
         <div className="header-copy">
           <BrandLogo />
-          <p className="eyebrow">Fashion retail workspace</p>
-          <h1>Магазин: KPI и аудит</h1>
+          <p className="eyebrow">AI-аудит отчетов магазина</p>
+          <h1>Проверка отчетов, KPI и рисков</h1>
           <p className="subtitle">
-            Проверяйте отчеты, риски и короткие подсказки Gemini.
+            Загружайте Excel, CSV или PDF: сервис находит ошибки, считает показатели и подсказывает, что исправить первым.
           </p>
         </div>
         <div className="header-actions">
@@ -384,15 +438,13 @@ export default function App() {
               askGemini={askGemini}
               chatAnswer={chatAnswer}
               isChatLoading={isChatLoading}
+              aiStatus={aiStatus}
               messages={chatMessages}
               personalInfo={personalInfo}
               setPersonalInfo={setPersonalInfo}
               attachedPhotos={attachedPhotos}
               setAttachedPhotos={setAttachedPhotos}
-              clearChat={() => {
-                setChatMessages([]);
-                setChatAnswer(null);
-              }}
+              clearChat={clearChat}
             />
           ) : null}
         </section>
@@ -408,7 +460,7 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
         <BrandLogo />
         <div className="landing-auth-actions">
           <button className={mode === "signup" ? "button" : "button secondary"} type="button" onClick={() => setMode("signup")}>
-            Зарегистрироваться
+            Проверить отчет
           </button>
           <button className={mode === "signin" ? "button" : "button secondary"} type="button" onClick={() => setMode("signin")}>
             Войти
@@ -418,28 +470,176 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
 
       <section className="landing-hero">
         <div className="landing-copy">
-          <p className="eyebrow">AI workspace для fashion retail</p>
-          <h1>Контроль магазина, отчетов и рисков в одном dashboard</h1>
+          <p className="eyebrow">Для владельцев fashion retail и небольших магазинов</p>
+          <h1>AI-аудитор, который проверяет отчеты магазина за вас</h1>
           <p className="subtitle">
-            Erbollka помогает загружать отчеты, видеть KPI, находить ошибки в документах, сравнивать месяцы и общаться с Gemini по данным магазина.
+            Загружаете Excel, CSV, PDF или фото документа. Erbollka показывает ошибки в данных, рискованные операции, KPI по продажам и короткий план действий.
           </p>
+          <div className="project-summary" aria-label="Кратко о проекте">
+            <span>
+              <strong>Что это</strong>
+              AI-кабинет для аудита отчетов магазина
+            </span>
+            <span>
+              <strong>Что проверяет</strong>
+              продажи, кассу, остатки, расходы и формулы
+            </span>
+            <span>
+              <strong>Что дает</strong>
+              список ошибок, KPI, PDF и совет Gemini
+            </span>
+          </div>
+          <div className="hero-actions">
+            <button className="button" type="button" onClick={() => setMode("signup")}>
+              Проверить первый отчет
+            </button>
+            <button className="button secondary" type="button" onClick={() => setMode("signin")}>
+              У меня уже есть вход
+            </button>
+          </div>
+          <ul className="landing-checklist" aria-label="Что можно сделать в кабинете">
+            <li>Находит пропуски, дубли, ошибки формул и подозрительные изменения.</li>
+            <li>Показывает риск отчета простым языком: низкий, средний или высокий.</li>
+            <li>Собирает KPI по продажам, прибыли, расходам, возвратам и скидкам.</li>
+            <li>Позволяет спросить Gemini, что делать с найденными проблемами.</li>
+          </ul>
           <div className="landing-points">
             <div>
-              <strong>Аудит документов</strong>
-              <span>Excel, CSV, PDF, изображения и другие файлы.</span>
+              <strong>1. Загрузка</strong>
+              <span>Добавьте файл отчета или откройте демо без подготовки.</span>
             </div>
             <div>
-              <strong>KPI и статистика</strong>
-              <span>Продажи, прибыль, расходы, возвраты и динамика.</span>
+              <strong>2. Проверка</strong>
+              <span>Сервис разбирает строки, показатели, аномалии и структуру.</span>
             </div>
             <div>
-              <strong>Gemini чат</strong>
-              <span>Короткие ответы, память, фото и идеи для роста.</span>
+              <strong>3. Решение</strong>
+              <span>Получите понятный список действий для владельца магазина.</span>
             </div>
           </div>
         </div>
 
         <AuthPanel mode={mode} setMode={setMode} />
+      </section>
+
+      <section className="landing-section demo-section">
+        <div>
+          <p className="eyebrow">Как это работает</p>
+          <h2>Три шага вместо ручной проверки</h2>
+          <div className="demo-steps">
+            <article>
+              <span>1</span>
+              <strong>Загрузи Excel</strong>
+              <p>Добавьте отчет по магазину: продажи, остатки, касса, зарплаты или KPI.</p>
+            </article>
+            <article>
+              <span>2</span>
+              <strong>ИИ анализирует отчет</strong>
+              <p>Сервис сверяет структуру, формулы, аномалии, динамику и рискованные строки.</p>
+            </article>
+            <article>
+              <span>3</span>
+              <strong>Получите список ошибок</strong>
+              <p>Видите причины, приоритеты и рекомендации, что исправить в первую очередь.</p>
+            </article>
+          </div>
+        </div>
+        <div className="demo-video" aria-label="30-секундное демо работы сервиса">
+          <div className="video-top">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="upload-animation">
+            <span className="file-icon">XLS</span>
+            <div>
+              <strong>Отчет_магазин_июнь.xlsx</strong>
+              <small>Загрузка и анализ данных</small>
+            </div>
+          </div>
+          <div className="scan-line" />
+          <p>30-секундное демо: загрузка файла, анализ ИИ и готовый список проблем.</p>
+        </div>
+      </section>
+
+      <section className="landing-section result-section">
+        <div className="result-copy">
+          <p className="eyebrow">Пример результата</p>
+          <h2>Понятный отчет для управленческого решения</h2>
+          <p className="subtitle">
+            После проверки вы получаете не абстрактный текст, а список конкретных проблем, листов и действий.
+          </p>
+        </div>
+        <div className="result-card" aria-label="Пример найденных проблем">
+          <div className="result-card-head">
+            <strong>Найдены проблемы</strong>
+            <span>Риск: высокий</span>
+          </div>
+          <ul>
+            <li>Несоответствие остатков на складе и в продажах</li>
+            <li>Подозрительное падение продаж по категории “Платья”</li>
+            <li>Ошибка в формуле листа №3, строка 48</li>
+            <li>Отсутствуют данные по кассе за 12 июня</li>
+          </ul>
+          <div className="recommendation-preview">
+            <strong>Рекомендация</strong>
+            <p>Сначала проверьте кассовые данные и формулу маржи, затем сверку остатков по SKU с высокой оборачиваемостью.</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="landing-section trust-section">
+        <div>
+          <p className="eyebrow">Безопасность данных</p>
+          <h2>Отчеты магазина остаются конфиденциальными</h2>
+        </div>
+        <div className="trust-grid">
+          <article>
+            <strong>SSL-защита</strong>
+            <span>Передача файлов защищена шифрованием.</span>
+          </article>
+          <article>
+            <strong>Удаление файлов</strong>
+            <span>Файлы удаляются через заданный срок хранения.</span>
+          </article>
+          <article>
+            <strong>Не для обучения</strong>
+            <span>Ваши Excel-файлы не используются для обучения моделей.</span>
+          </article>
+          <article>
+            <strong>Без третьих лиц</strong>
+            <span>Данные не передаются посторонним сервисам без необходимости анализа.</span>
+          </article>
+        </div>
+      </section>
+
+      <section className="landing-section faq-section">
+        <div>
+          <p className="eyebrow">FAQ</p>
+          <h2>Частые вопросы перед загрузкой отчета</h2>
+        </div>
+        <div className="faq-grid">
+          <details open>
+            <summary>Какие форматы поддерживаются?</summary>
+            <p>Excel XLSX, XLS, CSV, PDF, изображения, текстовые и офисные документы.</p>
+          </details>
+          <details>
+            <summary>Где хранятся данные?</summary>
+            <p>Данные привязаны к аккаунту и используются для истории проверок и работы кабинета.</p>
+          </details>
+          <details>
+            <summary>Используются ли файлы для обучения?</summary>
+            <p>Нет. Загруженные отчеты не используются для обучения AI-моделей.</p>
+          </details>
+          <details>
+            <summary>Сколько длится анализ?</summary>
+            <p>Обычно около 30 секунд. Большие файлы и PDF могут обрабатываться дольше.</p>
+          </details>
+          <details>
+            <summary>Есть ли бесплатный тариф?</summary>
+            <p>Да, можно зарегистрироваться и проверить первый отчет бесплатно.</p>
+          </details>
+        </div>
       </section>
     </main>
   );
@@ -486,11 +686,38 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
     }
   }
 
+  async function signInWithGoogle() {
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin,
+        },
+      });
+      if (error) {
+        setMessage(error.message);
+        setIsBusy(false);
+      }
+    } catch {
+      setMessage("Не удалось открыть вход через Google. Попробуйте еще раз.");
+      setIsBusy(false);
+    }
+  }
+
   return (
     <section className="auth-panel">
       <div>
         <p className="eyebrow">{mode === "signin" ? "Вход" : "Регистрация"}</p>
-        <h2>{mode === "signin" ? "Вернуться в dashboard" : "Создать аккаунт"}</h2>
+        <h2>{mode === "signin" ? "Войти в кабинет" : "Создать аккаунт"}</h2>
+      </div>
+      <button className="google-auth-button" type="button" onClick={signInWithGoogle} disabled={isBusy}>
+        <span aria-hidden="true">G</span>
+        {isBusy ? "Подождите..." : mode === "signin" ? "Войти с Google" : "Зарегистрироваться с Google"}
+      </button>
+      <div className="auth-divider">
+        <span>или</span>
       </div>
       <form className="form" onSubmit={onSubmit}>
         {mode === "signup" ? (
@@ -581,7 +808,14 @@ function AuditsPage({
   selectReport: (report: AuditReport) => void;
 }) {
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  const [historySearch, setHistorySearch] = useState("");
+  const [riskFilter, setRiskFilter] = useState<HistoryRiskFilter>("all");
   const visibleFindings = useMemo(() => prioritizeFindings(report?.findings ?? []).slice(0, visibleFindingsLimit), [report]);
+  const ownerSummary = useMemo(() => buildOwnerSummary(report), [report]);
+  const filteredHistory = useMemo(
+    () => filterHistory(history, historySearch, riskFilter),
+    [history, historySearch, riskFilter],
+  );
 
   useEffect(() => {
     setSelectedFinding(visibleFindings[0] ?? null);
@@ -603,6 +837,20 @@ function AuditsPage({
             <div className="summary-box">
               <strong>{report.file_name}</strong>
               <p>{report.summary}</p>
+            </div>
+            <div className="owner-brief">
+              <div className="panel-head compact-head">
+                <h2>Вывод для владельца</h2>
+                <span className="soft-pill">{riskLabel[report.risk_level] ?? report.risk_level}</span>
+              </div>
+              <div className="owner-brief-grid">
+                {ownerSummary.map((item) => (
+                  <div className="owner-brief-item" key={item.title}>
+                    <strong>{item.title}</strong>
+                    <p>{item.text}</p>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="recommendations">
               {report.recommendations.map((item) => (
@@ -700,14 +948,33 @@ function AuditsPage({
       </section>
 
       <section className="panel">
-        <h2>История документов</h2>
+        <div className="panel-head">
+          <h2>История документов</h2>
+          <span className="soft-pill">{filteredHistory.length} из {history.length}</span>
+        </div>
+        <div className="history-filters">
+          <input
+            value={historySearch}
+            onChange={(event) => setHistorySearch(event.target.value)}
+            placeholder="Поиск по файлу"
+          />
+          <select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as HistoryRiskFilter)}>
+            <option value="all">Все риски</option>
+            <option value="high">Высокий</option>
+            <option value="medium">Средний</option>
+            <option value="low">Низкий</option>
+          </select>
+        </div>
         <div className="history-list">
-          {history.map((item) => (
+          {filteredHistory.map((item) => (
             <button className="history-item" type="button" key={item.id} onClick={() => selectReport(item)}>
               <span>{item.file_name}</span>
-              <small>{new Date(item.created_at).toLocaleDateString("ru-RU")}</small>
+              <small>
+                {new Date(item.created_at).toLocaleDateString("ru-RU")} · {riskLabel[item.risk_level] ?? item.risk_level}
+              </small>
             </button>
           ))}
+          {history.length && !filteredHistory.length ? <p className="muted">По этим фильтрам ничего не найдено.</p> : null}
           {!history.length ? <p className="muted">История появится после первой проверки.</p> : null}
         </div>
       </section>
@@ -722,6 +989,7 @@ function ChatPage({
   askGemini,
   chatAnswer,
   isChatLoading,
+  aiStatus,
   messages,
   personalInfo,
   setPersonalInfo,
@@ -735,6 +1003,7 @@ function ChatPage({
   askGemini: (event: { preventDefault: () => void }, mode?: "chat" | "image") => void;
   chatAnswer: ChatResponse | null;
   isChatLoading: boolean;
+  aiStatus: AiStatus;
   messages: ChatMessage[];
   personalInfo: string;
   setPersonalInfo: (value: string) => void;
@@ -767,10 +1036,21 @@ function ChatPage({
           </div>
         </div>
 
+        <div className={`ai-status ${aiStatus.tone}`}>
+          <strong>{isChatLoading ? "Gemini думает" : aiStatus.label}</strong>
+          <span>{aiStatus.detail}</span>
+        </div>
+
         <div className="chat-thread">
           {messages.map((message) => (
             <div className={message.role === "user" ? "chat-bubble user" : "chat-bubble assistant"} key={message.id}>
-              <span>{message.role === "user" ? "Вы" : "Gemini"}</span>
+              <span>
+                {message.role === "user"
+                  ? "Вы"
+                  : message.source === "fallback"
+                    ? "Локальный ответ"
+                    : message.model || "Gemini"}
+              </span>
               <p>{message.text}</p>
               {message.photos?.length ? (
                 <div className="chat-photo-grid">
@@ -797,6 +1077,19 @@ function ChatPage({
             ))}
           </div>
         ) : null}
+
+        <div className="prompt-templates" aria-label="Шаблоны вопросов">
+          {chatPromptTemplates.map((template) => (
+            <button
+              type="button"
+              key={template}
+              onClick={() => setQuestion(template)}
+              disabled={isChatLoading}
+            >
+              {template}
+            </button>
+          ))}
+        </div>
 
         <form className="chat-composer" onSubmit={(event) => askGemini(event, "chat")}>
           <textarea
@@ -1005,6 +1298,48 @@ function formatNumber(value: number) {
   return Math.abs(value) >= 1000 ? formatMoney(value) : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value);
 }
 
+function buildOwnerSummary(report: AuditReport | null) {
+  if (!report) return [];
+  const totals = report.workbook_profile?.metric_totals ?? {};
+  const topFinding = prioritizeFindings(report.findings)[0];
+  const sales = Number(totals.sales ?? 0);
+  const profit = Number(totals.profit ?? 0);
+  const expense = Number(totals.expense ?? 0);
+  const returnValue = Number(totals.return ?? 0);
+  const quality = report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score);
+
+  return [
+    {
+      title: "Сегодня",
+      text: topFinding
+        ? `Сначала проверьте: ${topFinding.title}. ${topFinding.suggested_fix}`
+        : "Критичных замечаний не видно. Можно переходить к плановым проверкам продаж и расходов.",
+    },
+    {
+      title: "Финансы",
+      text: `Продажи ${formatMoney(sales)}, прибыль ${formatMoney(profit)}, расходы ${formatMoney(expense)}, возвраты ${formatMoney(returnValue)}.`,
+    },
+    {
+      title: "Контроль",
+      text: `Качество отчета ${quality}/100, риск: ${riskLabel[report.risk_level] ?? report.risk_level}, замечаний: ${report.total_findings}.`,
+    },
+  ];
+}
+
+function filterHistory(history: AuditReport[], search: string, riskFilter: HistoryRiskFilter) {
+  const query = search.trim().toLowerCase();
+  return history.filter((item) => {
+    const matchesSearch = !query || item.file_name.toLowerCase().includes(query);
+    const risk = item.risk_level.toLowerCase();
+    const matchesRisk =
+      riskFilter === "all" ||
+      (riskFilter === "high" && ["high", "critical"].includes(risk)) ||
+      (riskFilter === "medium" && risk === "medium") ||
+      (riskFilter === "low" && ["low", "info"].includes(risk));
+    return matchesSearch && matchesRisk;
+  });
+}
+
 function buildLocalChatFallback(report: AuditReport | null, question: string): ChatResponse {
   if (!report) {
     return {
@@ -1032,9 +1367,16 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, 
   const history = recentMessages ? `Последняя переписка:\n${recentMessages}` : "";
 
   if (!report) {
-    return [memory, history, `Вопрос пользователя: ${question}`, "Ответь до 6 содержательных пунктов или небольших абзацев."].filter(Boolean).join("\n\n");
+    return [
+      memory,
+      history,
+      `Вопрос пользователя: ${question}`,
+      "Режим ответа: дай полезный ответ для владельца магазина. Если вопрос не про магазин, все равно отвечай понятно и прикладно.",
+      "Формат: короткий вывод, затем 3-6 конкретных пунктов. Если даешь план, укажи первый шаг.",
+    ].filter(Boolean).join("\n\n");
   }
 
+  const ownerSummary = buildOwnerSummary(report);
   const reportContext = {
     question,
     file_name: report.file_name,
@@ -1042,6 +1384,7 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, 
     risk_level: report.risk_level,
     summary: report.summary,
     recommendations: report.recommendations,
+    owner_summary: ownerSummary,
     workbook_profile: report.workbook_profile,
     findings: report.findings.slice(0, 60).map((item) => ({
       code: item.code,
@@ -1057,7 +1400,8 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, 
     memory,
     history,
     `Вопрос пользователя: ${question}`,
-    "Ответь до 6 содержательных пунктов или небольших абзацев. В каждом пункте дай конкретный вывод, причину или действие. Без длинного вступления.",
+    "Режим ответа: ты помощник владельца fashion retail магазина. Дай сначала главный вывод, затем 3-6 конкретных пунктов: причина, риск или действие.",
+    "Если используешь данные отчета, опирайся только на контекст ниже. Если данных не хватает, так и скажи и предложи, что загрузить или проверить.",
     "Ниже есть дополнительный контекст загруженного отчета. Используй его только если он реально помогает ответу.",
     JSON.stringify(reportContext, null, 2),
   ].filter(Boolean).join("\n\n");
@@ -1125,7 +1469,9 @@ async function loadUserDataFromSupabase(user: User): Promise<{ personalInfo: str
           role: item.role === "user" ? "user" : "assistant",
           text: String(item.text ?? ""),
           imageUrl: typeof item.image_url === "string" ? item.image_url : undefined,
-          photos: Array.isArray(item.photos) ? item.photos : [],
+          photos: readStoredPhotos(item.photos),
+          source: readStoredMessageMeta(item.photos).source,
+          model: readStoredMessageMeta(item.photos).model,
         })),
   };
 }
@@ -1148,20 +1494,58 @@ async function savePersonalInfoToSupabase(userId: string, personalInfo: string) 
   });
 }
 
-async function saveChatMessagesToSupabase(userId: string, messages: ChatMessage[]) {
-  await supabase.from("chat_messages").delete().eq("user_id", userId);
-  const rows = messages.slice(-30).map((message, index) => ({
+async function appendChatMessageToSupabase(userId: string, message: ChatMessage) {
+  await supabase.from("chat_messages").insert({
     id: message.id,
     user_id: userId,
     role: message.role,
     text: message.text,
     image_url: message.imageUrl ?? null,
-    photos: message.photos ?? [],
-    created_at: new Date(Date.now() - (messages.length - index) * 1000).toISOString(),
-  }));
-  if (rows.length) {
-    await supabase.from("chat_messages").insert(rows);
+    photos: {
+      items: message.photos ?? [],
+      meta: {
+        source: message.source,
+        model: message.model,
+      },
+    },
+    created_at: new Date().toISOString(),
+  });
+  await trimStoredChatMessages(userId);
+}
+
+async function trimStoredChatMessages(userId: string) {
+  const { data } = await supabase
+    .from("chat_messages")
+    .select("id")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .range(30, 1000);
+
+  const ids = (data ?? []).map((item) => String(item.id));
+  if (ids.length) {
+    await supabase.from("chat_messages").delete().eq("user_id", userId).in("id", ids);
   }
+}
+
+async function clearChatMessagesInSupabase(userId: string) {
+  await supabase.from("chat_messages").delete().eq("user_id", userId);
+}
+
+function readStoredPhotos(value: unknown): Array<{ name: string; url: string }> {
+  if (Array.isArray(value)) return value as Array<{ name: string; url: string }>;
+  if (value && typeof value === "object" && "items" in value && Array.isArray((value as { items?: unknown }).items)) {
+    return (value as { items: Array<{ name: string; url: string }> }).items;
+  }
+  return [];
+}
+
+function readStoredMessageMeta(value: unknown): Pick<ChatMessage, "source" | "model"> {
+  if (!value || typeof value !== "object" || !("meta" in value)) return {};
+  const meta = (value as { meta?: { source?: unknown; model?: unknown } }).meta;
+  return {
+    source: meta?.source === "gemini" || meta?.source === "fallback" ? meta.source : undefined,
+    model: typeof meta?.model === "string" ? meta.model : undefined,
+  };
 }
 
 function prioritizeFindings(findings: Finding[]) {

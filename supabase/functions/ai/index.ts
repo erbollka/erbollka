@@ -22,7 +22,7 @@ const cors = {
 
 const jsonHeaders = { ...cors, 'Content-Type': 'application/json; charset=utf-8' };
 const conciseSystem =
-  'Отвечай по делу, но достаточно подробно: до 6 пунктов или 6 небольших абзацев. Без длинного вступления и воды. Давай конкретный вывод, причины и действия.';
+  'Отвечай по делу и структурно: главный вывод, затем причины и действия. До 6 пунктов или 6 небольших абзацев. Не выдумывай цифры, отделяй факт от предположения, избегай длинного вступления.';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
             generationConfig: {
               temperature: 0.25,
               topP: 0.8,
-              maxOutputTokens: 420,
+              maxOutputTokens: 620,
             },
           }),
         },
