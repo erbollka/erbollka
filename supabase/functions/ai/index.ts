@@ -12,7 +12,14 @@ const cors = {
 
 const jsonHeaders = { ...cors, "Content-Type": "application/json; charset=utf-8" };
 const baseSystem =
-  "You are Gemini in AuraRetail. Answer any user question helpfully and naturally. If uploaded document context or files are provided, read and use them when relevant. If the question is unrelated to retail or documents, answer normally. Separate facts from assumptions and do not invent document data.";
+  [
+    "You are Gemini in AuraRetail, a practical AI assistant for fashion retail owners and store teams.",
+    "Answer naturally in the user's language. Keep answers concise, specific, and action-oriented.",
+    "When retail reports, documents, images, or spreadsheet context are provided, ground your answer in them and mention the concrete evidence you used.",
+    "Separate known facts from assumptions. If data is missing, say what is missing instead of inventing document values.",
+    "For analysis requests, prioritize: revenue impact, margin/profit impact, inventory risk, returns/discounts, payroll/expense anomalies, and next actions.",
+    "For non-retail questions, answer normally without forcing a retail frame.",
+  ].join(" ");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -38,15 +45,15 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            systemInstruction: { parts: [{ text: [baseSystem, system].filter(Boolean).join("\n") }] },
+            systemInstruction: { parts: [{ text: buildSystemInstruction(system) }] },
             contents: [
               {
-                parts: [{ text: prompt }, ...normalizeFiles(files)],
+                parts: buildUserParts(prompt, files),
               },
             ],
             generationConfig: {
-              temperature: 0.45,
-              topP: 0.9,
+              temperature: 0.35,
+              topP: 0.92,
               maxOutputTokens: 2048,
             },
           }),
@@ -58,7 +65,7 @@ Deno.serve(async (req) => {
       if (res.ok && text.trim()) {
         return new Response(JSON.stringify({ text: text.trim(), model }), { headers: jsonHeaders });
       }
-      lastError = data?.error?.message ?? `Model ${model} returned an empty response`;
+      lastError = readGeminiError(data, model);
     }
 
     throw new Error(lastError);
@@ -123,6 +130,36 @@ function normalizeFiles(files: unknown) {
     }));
 }
 
+function buildSystemInstruction(system: unknown) {
+  return [baseSystem, typeof system === "string" ? system.trim() : ""].filter(Boolean).join("\n\n");
+}
+
+function buildUserParts(prompt: string, files: unknown) {
+  const evidenceReminder = [
+    "Before answering, identify what evidence is available in the prompt/files.",
+    "If the user asks for recommendations, return the highest-impact next steps first.",
+    "Use bullets only when they make the answer easier to scan.",
+  ].join(" ");
+
+  return [{ text: `${prompt}\n\n${evidenceReminder}` }, ...normalizeFiles(files)];
+}
+
 function readText(data: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }) {
   return data?.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("\n").trim() ?? "";
+}
+
+function readGeminiError(
+  data: {
+    error?: { message?: string };
+    promptFeedback?: { blockReason?: string };
+    candidates?: Array<{ finishReason?: string; safetyRatings?: Array<{ category?: string; probability?: string }> }>;
+  },
+  model: string,
+) {
+  const finishReason = data?.candidates?.[0]?.finishReason;
+  const blockReason = data?.promptFeedback?.blockReason;
+  if (data?.error?.message) return data.error.message;
+  if (blockReason) return `Model ${model} blocked the prompt: ${blockReason}`;
+  if (finishReason && finishReason !== "STOP") return `Model ${model} stopped without text: ${finishReason}`;
+  return `Model ${model} returned an empty response`;
 }
