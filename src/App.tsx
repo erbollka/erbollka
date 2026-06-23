@@ -198,6 +198,13 @@ export default function App() {
 
   const monthlyRows = useMemo(() => buildMonthlyRows(history, report), [history, report]);
 
+  function selectReportFromHistory(item: AuditReport) {
+    setReport(item);
+    setActiveReportFile(null);
+    setDocumentContext("");
+    setChatAnswer(null);
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) {
@@ -371,10 +378,10 @@ export default function App() {
               setPage={setPage}
             />
           ) : null}
-          {page === "reports" ? <ReportsPage uploadProps={uploadProps} report={report} history={history} selectReport={setReport} /> : null}
+          {page === "reports" ? <ReportsPage uploadProps={uploadProps} report={report} history={history} selectReport={selectReportFromHistory} documentContext={documentContext} activeReportFile={activeReportFile} /> : null}
           {page === "inventory" ? <InventoryPage report={report} totals={totals} /> : null}
           {page === "risk" ? (
-            <RiskAuditPage report={report} history={history} selectReport={setReport} />
+            <RiskAuditPage report={report} history={history} selectReport={selectReportFromHistory} />
           ) : null}
           {page === "insights" ? <InsightsPage report={report} setPage={setPage} /> : null}
           {page === "analytics" ? <AnalyticsPage report={report} comparison={comparison} rows={monthlyRows} /> : null}
@@ -395,6 +402,8 @@ export default function App() {
         attachedPhotos={attachedPhotos}
         setAttachedPhotos={setAttachedPhotos}
         clearChat={clearChat}
+        documentContext={documentContext}
+        activeReportFile={activeReportFile}
       />
     </main>
   );
@@ -918,6 +927,19 @@ function UploadDropzone({
           <em>Upload File</em>
           <input type="file" accept={acceptDocuments} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
         </label>
+        {file ? (
+          <div className="selected-file">
+            <div>
+              <strong>{file.name}</strong>
+              <span>
+                {formatFileSize(file.size)} / {file.type || "document"}
+              </span>
+            </div>
+            <button className="button ghost" type="button" onClick={() => setFile(null)} disabled={isLoading}>
+              Clear
+            </button>
+          </div>
+        ) : null}
         {isLoading ? <div className="skeleton-line" /> : null}
         {error ? <p className="error">{error}</p> : null}
         <button className="button full" disabled={isLoading}>
@@ -933,11 +955,15 @@ function ReportsPage({
   report,
   history,
   selectReport,
+  documentContext,
+  activeReportFile,
 }: {
   uploadProps: UploadProps;
   report: AuditReport | null;
   history: AuditReport[];
   selectReport: (report: AuditReport) => void;
+  documentContext: string;
+  activeReportFile: File | null;
 }) {
   return (
     <div className="reports-layout">
@@ -951,6 +977,7 @@ function ReportsPage({
           <span className="status-pill">{report ? riskLabel[report.risk_level] ?? report.risk_level : "Waiting"}</span>
         </div>
         <p className="muted">{report?.summary ?? "Upload a report to populate audit context."}</p>
+        <DocumentContextCard report={report} documentContext={documentContext} activeReportFile={activeReportFile} />
         <div className="history-list">
           {history.map((item) => (
             <button className="history-item" type="button" key={item.id} onClick={() => selectReport(item)}>
@@ -963,6 +990,41 @@ function ReportsPage({
           {!history.length ? <p className="muted">Report history will appear after your first audit.</p> : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function DocumentContextCard({
+  report,
+  documentContext,
+  activeReportFile,
+}: {
+  report: AuditReport | null;
+  documentContext: string;
+  activeReportFile: File | null;
+}) {
+  let title = "No source document loaded";
+  let text = "Upload a file to let Aura AI read the document before answering.";
+  let tone = "idle";
+
+  if (report && documentContext) {
+    title = "Document text is ready for chat";
+    text = `${documentContext.length.toLocaleString("en-US")} characters extracted from ${activeReportFile?.name ?? report.file_name}.`;
+    tone = "ready";
+  } else if (report && activeReportFile && shouldAttachFileToGemini(activeReportFile)) {
+    title = "Document file will be sent to Gemini";
+    text = `${activeReportFile.name} will be attached to chat questions so Gemini can inspect it directly.`;
+    tone = "ready";
+  } else if (report) {
+    title = "Structured audit is available";
+    text = "This report was selected from history or has no readable raw text. Chat will use summary, metrics, and findings.";
+    tone = "warning";
+  }
+
+  return (
+    <div className={`document-context ${tone}`}>
+      <strong>{title}</strong>
+      <span>{text}</span>
     </div>
   );
 }
@@ -1357,6 +1419,8 @@ function AIChat({
   attachedPhotos,
   setAttachedPhotos,
   clearChat,
+  documentContext,
+  activeReportFile,
 }: {
   report: AuditReport | null;
   question: string;
@@ -1369,6 +1433,8 @@ function AIChat({
   attachedPhotos: ChatPhoto[];
   setAttachedPhotos: (value: ChatPhoto[]) => void;
   clearChat: () => void;
+  documentContext: string;
+  activeReportFile: File | null;
 }) {
   const [isToolsOpen, setIsToolsOpen] = useState(false);
 
@@ -1393,7 +1459,7 @@ function AIChat({
 
       <div className={`ai-status ${aiStatus.tone}`}>
         <strong>{isChatLoading ? "Aura AI is thinking" : aiStatus.label}</strong>
-        <span>{report ? "Report context active" : aiStatus.detail}</span>
+        <span>{report ? buildChatContextLabel(report, documentContext, activeReportFile) : aiStatus.detail}</span>
       </div>
 
       <div className="prompt-templates" aria-label="Quick prompts">
@@ -1518,9 +1584,25 @@ function formatUsd(value: number) {
   return `$${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0, notation: value >= 1000000 ? "compact" : "standard" }).format(value)}`;
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function formatPercentLike(value: number) {
   const normalized = Math.max(0, Math.min(100, value));
   return `${Number(normalized).toFixed(normalized % 1 ? 1 : 0)}%`;
+}
+
+function buildChatContextLabel(report: AuditReport, documentContext: string, activeReportFile: File | null) {
+  if (documentContext) {
+    return `Reading source text from ${activeReportFile?.name ?? report.file_name} plus audit findings.`;
+  }
+  if (activeReportFile && shouldAttachFileToGemini(activeReportFile)) {
+    return `Attaching ${activeReportFile.name} to Gemini with the audit findings.`;
+  }
+  return "Using saved audit summary, metrics, and findings. Re-upload the file for raw document context.";
 }
 
 function buildOwnerSummary(report: AuditReport | null) {

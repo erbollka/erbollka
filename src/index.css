@@ -1163,6 +1163,57 @@ button {
   font-weight: 800;
 }
 
+.selected-file,
+.document-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  background: #ffffff;
+}
+
+.selected-file div,
+.document-context {
+  min-width: 0;
+}
+
+.selected-file strong,
+.document-context strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.selected-file span,
+.document-context span {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-context {
+  display: grid;
+  justify-content: stretch;
+  margin: 14px 0;
+}
+
+.document-context.ready {
+  border-color: rgb(16 185 129 / 24%);
+  background: #ecfdf5;
+}
+
+.document-context.warning {
+  border-color: rgb(245 158 11 / 28%);
+  background: #fffbeb;
+}
+
 .file-drop.loading::after,
 .skeleton-line {
   display: block;
