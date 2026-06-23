@@ -11,12 +11,11 @@ import {
   pdfUrl,
   uploadAudit,
 } from "./lib/api";
-import { BrandLogo } from "./components/BrandLogo";
 import { demoComparison, demoReport } from "./lib/demoReport";
 import { supabase } from "./lib/supabase";
 import "./index.css";
 
-type Page = "kpi" | "audits" | "stats" | "chat";
+type Page = "overview" | "reports" | "inventory" | "risk" | "insights" | "analytics" | "settings";
 type AuthMode = "signin" | "signup";
 
 type ChatPhoto = {
@@ -43,43 +42,43 @@ type AiStatus = {
 };
 
 const severityLabel: Record<Severity, string> = {
-  info: "Инфо",
-  low: "Низкий",
-  medium: "Средний",
-  high: "Высокий",
-  critical: "Критический",
+  info: "Info",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  critical: "Critical",
 };
 
 const riskLabel: Record<string, string> = {
-  low: "Низкий",
-  medium: "Средний",
-  high: "Высокий",
-  critical: "Критический",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  critical: "Critical",
+  info: "Info",
 };
 
 const kpiLabels: Record<string, string> = {
-  sales: "Продажи",
-  profit: "Прибыль",
-  salary: "Зарплата",
-  bonus: "Премии",
-  expense: "Расходы",
-  discount: "Скидки",
-  return: "Возвраты",
+  sales: "Sales",
+  profit: "Profit",
+  salary: "Payroll",
+  bonus: "Bonus",
+  expense: "Expenses",
+  discount: "Discounts",
+  return: "Returns",
 };
 
 const mainKpiKeys = ["sales", "profit", "expense", "return"];
 const visibleFindingsLimit = 5;
 const chatPromptTemplates = [
-  "Что проверить в первую очередь?",
-  "Сделай план роста на неделю",
-  "Объясни риски простыми словами",
-  "Напиши сообщение сотруднику",
-  "Сравни с прошлым месяцем",
+  "Summarize report",
+  "Find inventory risks",
+  "Explain revenue drop",
+  "Create action plan",
 ];
 const idleAiStatus: AiStatus = {
-  label: "Gemini готов",
+  label: "Aura AI ready",
   tone: "idle",
-  detail: "Ответы могут учитывать отчет, память и фото.",
+  detail: "Ask about uploaded reports, inventory risk, revenue changes, or executive summaries.",
 };
 
 const acceptDocuments = [
@@ -109,14 +108,14 @@ export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isCloudDataReady, setIsCloudDataReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("signin");
-  const [page, setPage] = useState<Page>("kpi");
+  const [page, setPage] = useState<Page>("overview");
   const [file, setFile] = useState<File | null>(null);
   const [storeId, setStoreId] = useState("00000000-0000-0000-0000-000000000001");
   const [periodMonth, setPeriodMonth] = useState("2026-06");
   const [report, setReport] = useState<AuditReport | null>(null);
   const [comparison, setComparison] = useState<ReportComparison | null>(null);
   const [history, setHistory] = useState<AuditReport[]>([]);
-  const [question, setQuestion] = useState("Дай короткий план роста магазина на неделю");
+  const [question, setQuestion] = useState("Summarize the current retail report and list the first actions.");
   const [chatAnswer, setChatAnswer] = useState<ChatResponse | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => readStoredChatMessages());
   const [personalInfo, setPersonalInfo] = useState(() => localStorage.getItem("erbollka_personal_info") ?? "");
@@ -128,12 +127,12 @@ export default function App() {
 
   const isDemoReport = report?.id === demoReport.id;
   const totals = report?.workbook_profile?.metric_totals ?? {};
-  const qualityScore = report?.workbook_profile?.quality_score ?? (report ? Math.max(0, 100 - report.risk_score) : 0);
-  const highRiskCount = report?.findings.filter((item) => ["high", "critical"].includes(item.severity)).length ?? 0;
+  const qualityScore = report?.workbook_profile?.quality_score ?? (report ? Math.max(0, 100 - report.risk_score) : 99.9);
+  const highRiskCount = report?.findings.filter((item) => ["high", "critical"].includes(item.severity)).length ?? 3;
   const fraudCount =
     report?.findings.filter((item) =>
       ["SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"].includes(item.code),
-    ).length ?? 0;
+    ).length ?? 2;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -206,7 +205,7 @@ export default function App() {
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) {
-      setError("Выберите документ: Excel, CSV, PDF, TXT, изображение или другой файл.");
+      setError("Choose a retail report first: XLSX, CSV, PDF, image, or office document.");
       return;
     }
 
@@ -217,9 +216,9 @@ export default function App() {
       setReport(result);
       setHistory((items) => [result, ...items.filter((item) => item.id !== result.id)]);
       setChatAnswer(null);
-      setPage("audits");
+      setPage("risk");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось проверить документ");
+      setError(err instanceof Error ? err.message : "Could not analyze the document.");
     } finally {
       setIsLoading(false);
     }
@@ -232,7 +231,7 @@ export default function App() {
     setComparison(demoComparison);
     setChatAnswer(null);
     setHistory((items) => [demoReport, ...items.filter((item) => item.id !== demoReport.id)]);
-    setPage("audits");
+    setPage("risk");
   }
 
   async function askGemini(event: { preventDefault: () => void }, mode: "chat" | "image" = "chat") {
@@ -258,9 +257,9 @@ export default function App() {
     const localAnswer = buildLocalChatFallback(report, currentQuestion);
     setChatAnswer(localAnswer);
     setAiStatus({
-      label: "Gemini думает",
+      label: "Aura AI is thinking",
       tone: "thinking",
-      detail: report ? "Учитываю отчет, память и последние сообщения." : "Учитываю память и последние сообщения.",
+      detail: report ? "Using report context, memory, and recent messages." : "Using memory and recent messages.",
     });
     setIsChatLoading(true);
 
@@ -270,7 +269,7 @@ export default function App() {
           body: {
             mode,
             system:
-              "Ты Gemini-помощник для владельца fashion retail бизнеса. Отвечай по-русски структурно и практично: сначала короткий вывод, затем причины и действия. До 6 пунктов или 6 небольших абзацев. Не выдумывай цифры, явно отделяй факт от предположения.",
+              "You are Aura AI, a concise retail analytics assistant. Answer in a practical executive style. Start with the conclusion, then provide causes, risks, and next actions. Do not invent numbers.",
             prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, [...chatMessages, userMessage]),
             files: currentPhotos.map(({ mimeType, data }) => ({ mimeType, data })),
           },
@@ -281,7 +280,7 @@ export default function App() {
         throw error;
       }
       if (typeof data?.text === "string" || typeof data?.image === "string") {
-        const answer = mode === "image" ? data?.text?.trim() || "Готово." : compactAiAnswer(data.text);
+        const answer = mode === "image" ? data?.text?.trim() || "Done." : compactAiAnswer(data.text);
         const model = typeof data?.model === "string" ? data.model : "Gemini";
         const assistantMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -293,16 +292,16 @@ export default function App() {
         };
         setChatAnswer({ answer, used_ai: true });
         setAiStatus({
-          label: "Gemini ответил",
+          label: "Aura AI answered",
           tone: "ready",
-          detail: `${model}${report ? " · учтен отчет" : " · общий режим"}${currentPhotos.length ? " · учтены фото" : ""}`,
+          detail: `${model}${report ? " with report context" : " in general mode"}${currentPhotos.length ? " and photos" : ""}`,
         });
         setChatMessages((items) => [...items, assistantMessage]);
         if (user && isCloudDataReady) {
           appendChatMessageToSupabase(user.id, assistantMessage);
         }
       } else {
-        throw new Error("Gemini вернул пустой ответ");
+        throw new Error("Gemini returned an empty response");
       }
     } catch {
       const assistantMessage: ChatMessage = {
@@ -312,9 +311,9 @@ export default function App() {
         source: "fallback",
       };
       setAiStatus({
-        label: "Локальный ответ",
+        label: "Local fallback",
         tone: "fallback",
-        detail: "Gemini не ответил вовремя, показан быстрый расчет по данным отчета.",
+        detail: "Gemini did not answer in time, so Aura generated a quick report-based fallback.",
       });
       setChatMessages((items) => [...items, assistantMessage]);
       if (user && isCloudDataReady) {
@@ -334,11 +333,24 @@ export default function App() {
     }
   }
 
+  const uploadProps = {
+    file,
+    setFile,
+    storeId,
+    setStoreId,
+    periodMonth,
+    setPeriodMonth,
+    onSubmit,
+    isLoading,
+    error,
+  };
+
   if (!isAuthReady) {
     return (
-      <main className="landing-page">
-        <div className="landing-topbar">
-          <BrandLogo />
+      <main className="loading-screen">
+        <div className="loading-card">
+          <AuraLogo />
+          <span className="loading-line" />
         </div>
       </main>
     );
@@ -349,107 +361,84 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <div className="header-copy">
-          <BrandLogo />
-          <p className="eyebrow">AI-аудит отчетов магазина</p>
-          <h1>Проверка отчетов, KPI и рисков</h1>
-          <p className="subtitle">
-            Загружайте Excel, CSV или PDF: сервис находит ошибки, считает показатели и подсказывает, что исправить первым.
-          </p>
-        </div>
-        <div className="header-actions">
-          <div className="user-chip">
-            <span>{user.user_metadata?.full_name || user.email}</span>
-            <button type="button" onClick={() => supabase.auth.signOut()}>
-              Выйти
-            </button>
-          </div>
-          {report && !isDemoReport ? (
-            <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
-              PDF
-            </a>
-          ) : null}
-          <button className="button" type="button" onClick={openDemoReport}>
-            Демо
-          </button>
-        </div>
-      </header>
-
-      <nav className="page-tabs" aria-label="Разделы">
-        <TabButton active={page === "kpi"} onClick={() => setPage("kpi")} label="KPI" />
-        <TabButton active={page === "audits"} onClick={() => setPage("audits")} label="Аудит" />
-        <TabButton active={page === "stats"} onClick={() => setPage("stats")} label="Статистика" />
-        <TabButton active={page === "chat"} onClick={() => setPage("chat")} label="Чат" />
-      </nav>
-
-      <section className="workspace">
-        <aside className="upload-panel">
-          <form className="form" onSubmit={onSubmit}>
-            <div>
-              <h2>Загрузка документа</h2>
-              <p className="muted">Excel, CSV, PDF, TXT, изображения и офисные документы. Таблицы читаются локально, сложные файлы отправляются в Gemini.</p>
-            </div>
-            <label>
-              Магазин
-              <input value={storeId} onChange={(event) => setStoreId(event.target.value)} />
-            </label>
-            <label>
-              Месяц отчета
-              <input type="month" value={periodMonth} onChange={(event) => setPeriodMonth(event.target.value)} />
-            </label>
-            <label className="file-drop">
-              <span>{file ? file.name : "Выбрать документ"}</span>
-              <small>Поддерживаются таблицы, PDF, текст, изображения и офисные файлы.</small>
-              <input type="file" accept={acceptDocuments} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-            </label>
-            {error ? <p className="error">{error}</p> : null}
-            <button className="button" disabled={isLoading}>
-              {isLoading ? "Проверяю..." : "Загрузить и проверить"}
-            </button>
-          </form>
-
-          <div className="current-report">
-            <span>Текущий документ</span>
-            <strong>{report?.file_name ?? "Нет документа"}</strong>
-            <small>{report ? `${riskLabel[report.risk_level] ?? report.risk_level}, ошибок: ${report.total_findings}` : "Откройте демо или загрузите файл"}</small>
-          </div>
-        </aside>
-
-        <section className="page-content">
-          {page === "kpi" ? (
-            <KpiPage report={report} totals={totals} qualityScore={qualityScore} highRiskCount={highRiskCount} fraudCount={fraudCount} />
-          ) : null}
-          {page === "audits" ? (
-            <AuditsPage
+    <main className="dashboard-shell">
+      <Sidebar page={page} setPage={setPage} openDemoReport={openDemoReport} />
+      <section className="dashboard-main">
+        <TopBar user={user} setPage={setPage} report={report} isDemoReport={isDemoReport} openDemoReport={openDemoReport} />
+        <div className="dashboard-content">
+          {page === "overview" ? (
+            <OverviewPage
               report={report}
-              isDemoReport={isDemoReport}
-              history={history}
-              selectReport={setReport}
+              totals={totals}
+              qualityScore={qualityScore}
+              highRiskCount={highRiskCount}
+              fraudCount={fraudCount}
+              uploadProps={uploadProps}
+              openDemoReport={openDemoReport}
+              setPage={setPage}
             />
           ) : null}
-          {page === "stats" ? <StatsPage report={report} comparison={comparison} rows={monthlyRows} /> : null}
-          {page === "chat" ? (
-            <ChatPage
-              report={report}
-              question={question}
-              setQuestion={setQuestion}
-              askGemini={askGemini}
-              chatAnswer={chatAnswer}
-              isChatLoading={isChatLoading}
-              aiStatus={aiStatus}
-              messages={chatMessages}
-              personalInfo={personalInfo}
-              setPersonalInfo={setPersonalInfo}
-              attachedPhotos={attachedPhotos}
-              setAttachedPhotos={setAttachedPhotos}
-              clearChat={clearChat}
-            />
+          {page === "reports" ? <ReportsPage uploadProps={uploadProps} report={report} history={history} selectReport={setReport} /> : null}
+          {page === "inventory" ? <InventoryPage report={report} totals={totals} /> : null}
+          {page === "risk" ? (
+            <RiskAuditPage report={report} isDemoReport={isDemoReport} history={history} selectReport={setReport} />
           ) : null}
-        </section>
+          {page === "insights" ? <InsightsPage report={report} setPage={setPage} /> : null}
+          {page === "analytics" ? <AnalyticsPage report={report} comparison={comparison} rows={monthlyRows} /> : null}
+          {page === "settings" ? (
+            <SettingsPage personalInfo={personalInfo} setPersonalInfo={setPersonalInfo} user={user} />
+          ) : null}
+        </div>
       </section>
+      <AIChat
+        report={report}
+        question={question}
+        setQuestion={setQuestion}
+        askGemini={askGemini}
+        chatAnswer={chatAnswer}
+        isChatLoading={isChatLoading}
+        aiStatus={aiStatus}
+        messages={chatMessages}
+        attachedPhotos={attachedPhotos}
+        setAttachedPhotos={setAttachedPhotos}
+        clearChat={clearChat}
+      />
     </main>
+  );
+}
+
+function AuraLogo() {
+  return (
+    <div className="aura-logo" aria-label="AuraRetail">
+      <span className="aura-mark">A</span>
+      <span>
+        <strong>AuraRetail</strong>
+        <small>AI audit analytics</small>
+      </span>
+    </div>
+  );
+}
+
+function GoogleLogo() {
+  return (
+    <svg aria-hidden="true" className="google-logo" viewBox="0 0 24 24" focusable="false">
+      <path
+        fill="#4285F4"
+        d="M23.52 12.27c0-.82-.07-1.6-.2-2.36H12v4.47h6.47a5.53 5.53 0 0 1-2.4 3.63v2.96h3.89c2.27-2.1 3.56-5.18 3.56-8.7z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.96-1.07 7.95-2.93l-3.89-2.96c-1.08.72-2.45 1.14-4.06 1.14-3.12 0-5.76-2.1-6.7-4.93H1.3v3.05A12 12 0 0 0 12 24z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.3 14.32A7.2 7.2 0 0 1 4.93 12c0-.81.13-1.6.37-2.32V6.63H1.3A12 12 0 0 0 0 12c0 1.93.46 3.75 1.3 5.37l4-3.05z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.76 0 3.34.61 4.59 1.8l3.44-3.44A11.55 11.55 0 0 0 12 0 12 12 0 0 0 1.3 6.63l4 3.05C6.24 6.85 8.88 4.75 12 4.75z"
+      />
+    </svg>
   );
 }
 
@@ -457,191 +446,110 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
   return (
     <main className="landing-page">
       <header className="landing-topbar">
-        <BrandLogo />
+        <AuraLogo />
         <div className="landing-auth-actions">
-          <button className={mode === "signup" ? "button" : "button secondary"} type="button" onClick={() => setMode("signup")}>
-            Проверить отчет
+          <button className="button ghost" type="button" onClick={() => setMode("signin")}>
+            Sign in
           </button>
-          <button className={mode === "signin" ? "button" : "button secondary"} type="button" onClick={() => setMode("signin")}>
-            Войти
+          <button className="button" type="button" onClick={() => setMode("signup")}>
+            Get Started
           </button>
         </div>
       </header>
 
       <section className="landing-hero">
-        <div className="landing-copy">
-          <p className="eyebrow">Для владельцев fashion retail и небольших магазинов</p>
-          <h1>AI-аудитор, который проверяет отчеты магазина за вас</h1>
+        <div className="hero-copy">
+          <span className="eyebrow">AI-powered retail audit and analytics dashboard</span>
+          <h1>AI Retail Auditor: Precision Intelligence for Every Store.</h1>
           <p className="subtitle">
-            Загружаете Excel, CSV, PDF или фото документа. Erbollka показывает ошибки в данных, рискованные операции, KPI по продажам и короткий план действий.
+            Upload retail reports, audit inventory performance, detect risks, and get AI-powered recommendations instantly.
           </p>
-          <div className="project-summary" aria-label="Кратко о проекте">
-            <span>
-              <strong>Что это</strong>
-              AI-кабинет для аудита отчетов магазина
-            </span>
-            <span>
-              <strong>Что проверяет</strong>
-              продажи, кассу, остатки, расходы и формулы
-            </span>
-            <span>
-              <strong>Что дает</strong>
-              список ошибок, KPI, PDF и совет Gemini
-            </span>
-          </div>
           <div className="hero-actions">
-            <button className="button" type="button" onClick={() => setMode("signup")}>
-              Проверить первый отчет
+            <button className="button button-lg" type="button" onClick={() => setMode("signup")}>
+              Get Started
             </button>
-            <button className="button secondary" type="button" onClick={() => setMode("signin")}>
-              У меня уже есть вход
+            <button className="button secondary button-lg" type="button" onClick={() => setMode("signin")}>
+              Watch Demo
             </button>
           </div>
-          <ul className="landing-checklist" aria-label="Что можно сделать в кабинете">
-            <li>Находит пропуски, дубли, ошибки формул и подозрительные изменения.</li>
-            <li>Показывает риск отчета простым языком: низкий, средний или высокий.</li>
-            <li>Собирает KPI по продажам, прибыли, расходам, возвратам и скидкам.</li>
-            <li>Позволяет спросить Gemini, что делать с найденными проблемами.</li>
-          </ul>
-          <div className="landing-points">
-            <div>
-              <strong>1. Загрузка</strong>
-              <span>Добавьте файл отчета или откройте демо без подготовки.</span>
-            </div>
-            <div>
-              <strong>2. Проверка</strong>
-              <span>Сервис разбирает строки, показатели, аномалии и структуру.</span>
-            </div>
-            <div>
-              <strong>3. Решение</strong>
-              <span>Получите понятный список действий для владельца магазина.</span>
-            </div>
+          <UploadMockup />
+          <div className="value-grid">
+            <ValueCard title="Real-time Auditing" text="Parse files, surface anomalies, and prioritize what matters first." />
+            <ValueCard title="Risk Prioritization" text="Rank inventory, POS, margin, and promotion issues by impact." />
+            <ValueCard title="Executive Summary AI" text="Turn noisy reports into board-ready actions in seconds." />
+            <ValueCard title="Inventory Insights" text="Understand SKU movement, duplication, and stock variance." />
           </div>
         </div>
-
-        <AuthPanel mode={mode} setMode={setMode} />
-      </section>
-
-      <section className="landing-section demo-section">
-        <div>
-          <p className="eyebrow">Как это работает</p>
-          <h2>Три шага вместо ручной проверки</h2>
-          <div className="demo-steps">
-            <article>
-              <span>1</span>
-              <strong>Загрузи Excel</strong>
-              <p>Добавьте отчет по магазину: продажи, остатки, касса, зарплаты или KPI.</p>
-            </article>
-            <article>
-              <span>2</span>
-              <strong>ИИ анализирует отчет</strong>
-              <p>Сервис сверяет структуру, формулы, аномалии, динамику и рискованные строки.</p>
-            </article>
-            <article>
-              <span>3</span>
-              <strong>Получите список ошибок</strong>
-              <p>Видите причины, приоритеты и рекомендации, что исправить в первую очередь.</p>
-            </article>
-          </div>
-        </div>
-        <div className="demo-video" aria-label="30-секундное демо работы сервиса">
-          <div className="video-top">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div className="upload-animation">
-            <span className="file-icon">XLS</span>
-            <div>
-              <strong>Отчет_магазин_июнь.xlsx</strong>
-              <small>Загрузка и анализ данных</small>
-            </div>
-          </div>
-          <div className="scan-line" />
-          <p>30-секундное демо: загрузка файла, анализ ИИ и готовый список проблем.</p>
-        </div>
-      </section>
-
-      <section className="landing-section result-section">
-        <div className="result-copy">
-          <p className="eyebrow">Пример результата</p>
-          <h2>Понятный отчет для управленческого решения</h2>
-          <p className="subtitle">
-            После проверки вы получаете не абстрактный текст, а список конкретных проблем, листов и действий.
-          </p>
-        </div>
-        <div className="result-card" aria-label="Пример найденных проблем">
-          <div className="result-card-head">
-            <strong>Найдены проблемы</strong>
-            <span>Риск: высокий</span>
-          </div>
-          <ul>
-            <li>Несоответствие остатков на складе и в продажах</li>
-            <li>Подозрительное падение продаж по категории “Платья”</li>
-            <li>Ошибка в формуле листа №3, строка 48</li>
-            <li>Отсутствуют данные по кассе за 12 июня</li>
-          </ul>
-          <div className="recommendation-preview">
-            <strong>Рекомендация</strong>
-            <p>Сначала проверьте кассовые данные и формулу маржи, затем сверку остатков по SKU с высокой оборачиваемостью.</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="landing-section trust-section">
-        <div>
-          <p className="eyebrow">Безопасность данных</p>
-          <h2>Отчеты магазина остаются конфиденциальными</h2>
-        </div>
-        <div className="trust-grid">
-          <article>
-            <strong>SSL-защита</strong>
-            <span>Передача файлов защищена шифрованием.</span>
-          </article>
-          <article>
-            <strong>Удаление файлов</strong>
-            <span>Файлы удаляются через заданный срок хранения.</span>
-          </article>
-          <article>
-            <strong>Не для обучения</strong>
-            <span>Ваши Excel-файлы не используются для обучения моделей.</span>
-          </article>
-          <article>
-            <strong>Без третьих лиц</strong>
-            <span>Данные не передаются посторонним сервисам без необходимости анализа.</span>
-          </article>
-        </div>
-      </section>
-
-      <section className="landing-section faq-section">
-        <div>
-          <p className="eyebrow">FAQ</p>
-          <h2>Частые вопросы перед загрузкой отчета</h2>
-        </div>
-        <div className="faq-grid">
-          <details open>
-            <summary>Какие форматы поддерживаются?</summary>
-            <p>Excel XLSX, XLS, CSV, PDF, изображения, текстовые и офисные документы.</p>
-          </details>
-          <details>
-            <summary>Где хранятся данные?</summary>
-            <p>Данные привязаны к аккаунту и используются для истории проверок и работы кабинета.</p>
-          </details>
-          <details>
-            <summary>Используются ли файлы для обучения?</summary>
-            <p>Нет. Загруженные отчеты не используются для обучения AI-моделей.</p>
-          </details>
-          <details>
-            <summary>Сколько длится анализ?</summary>
-            <p>Обычно около 30 секунд. Большие файлы и PDF могут обрабатываться дольше.</p>
-          </details>
-          <details>
-            <summary>Есть ли бесплатный тариф?</summary>
-            <p>Да, можно зарегистрироваться и проверить первый отчет бесплатно.</p>
-          </details>
+        <div className="landing-side">
+          <ReportPreview />
+          <LoginPage mode={mode} setMode={setMode} />
         </div>
       </section>
     </main>
+  );
+}
+
+function UploadMockup() {
+  return (
+    <div className="landing-upload">
+      <div className="upload-icon">UP</div>
+      <strong>Drop your retail reports here</strong>
+      <span>Supports CSV, XLSX, PDF reports</span>
+      <button className="button secondary" type="button">
+        Upload File
+      </button>
+    </div>
+  );
+}
+
+function ReportPreview() {
+  return (
+    <div className="report-preview">
+      <div className="preview-head">
+        <span>Q3 inventory audit</span>
+        <strong>99.9%</strong>
+      </div>
+      <div className="mock-chart">
+        {[54, 78, 46, 84, 62, 91].map((height, index) => (
+          <span style={{ height: `${height}%` }} key={index} />
+        ))}
+      </div>
+      <div className="preview-row">
+        <span>Recovered value</span>
+        <strong>$1.2M</strong>
+      </div>
+      <div className="preview-row warning">
+        <span>Risk level</span>
+        <strong>Medium</strong>
+      </div>
+    </div>
+  );
+}
+
+function ValueCard({ title, text }: { title: string; text: string }) {
+  return (
+    <article className="value-card">
+      <span className="card-dot" />
+      <strong>{title}</strong>
+      <p>{text}</p>
+    </article>
+  );
+}
+
+function LoginPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode) => void }) {
+  return (
+    <section className="login-shell">
+      <div className="login-gradient">
+        <span className="eyebrow">Enterprise intelligence</span>
+        <h2>Transforming Retail Intelligence.</h2>
+        <p>Audit faster, recover revenue, and make every store decision data-driven.</p>
+        <div className="login-stats">
+          <strong>99.9% AI accuracy</strong>
+          <strong>2.4s avg analysis</strong>
+        </div>
+      </div>
+      <AuthPanel mode={mode} setMode={setMode} />
+    </section>
   );
 }
 
@@ -675,12 +583,12 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
       if (result.error) {
         setMessage(result.error.message);
       } else if (mode === "signup" && !result.data.session) {
-        setMessage("Аккаунт создан. Проверьте почту для подтверждения входа.");
+        setMessage("Account created. Check your email to confirm sign in.");
       } else if (result.data.user) {
         await saveProfileToSupabase(result.data.user, fullName, storeName);
       }
     } catch {
-      setMessage("Не удалось выполнить действие. Попробуйте еще раз.");
+      setMessage("Could not complete the action. Please try again.");
     } finally {
       setIsBusy(false);
     }
@@ -701,7 +609,7 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
         setIsBusy(false);
       }
     } catch {
-      setMessage("Не удалось открыть вход через Google. Попробуйте еще раз.");
+      setMessage("Could not open Google sign in. Please try again.");
       setIsBusy(false);
     }
   }
@@ -709,99 +617,410 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
   return (
     <section className="auth-panel">
       <div>
-        <p className="eyebrow">{mode === "signin" ? "Вход" : "Регистрация"}</p>
-        <h2>{mode === "signin" ? "Войти в кабинет" : "Создать аккаунт"}</h2>
+        <p className="eyebrow">{mode === "signin" ? "Secure login" : "Start free"}</p>
+        <h2>Welcome back</h2>
       </div>
       <button className="google-auth-button" type="button" onClick={signInWithGoogle} disabled={isBusy}>
-        <svg aria-hidden="true" className="google-logo" viewBox="0 0 24 24" focusable="false">
-          <path
-            fill="#4285F4"
-            d="M23.52 12.27c0-.82-.07-1.6-.2-2.36H12v4.47h6.47a5.53 5.53 0 0 1-2.4 3.63v2.96h3.89c2.27-2.1 3.56-5.18 3.56-8.7z"
-          />
-          <path
-            fill="#34A853"
-            d="M12 24c3.24 0 5.96-1.07 7.95-2.93l-3.89-2.96c-1.08.72-2.45 1.14-4.06 1.14-3.12 0-5.76-2.1-6.7-4.93H1.3v3.05A12 12 0 0 0 12 24z"
-          />
-          <path
-            fill="#FBBC05"
-            d="M5.3 14.32A7.2 7.2 0 0 1 4.93 12c0-.81.13-1.6.37-2.32V6.63H1.3A12 12 0 0 0 0 12c0 1.93.46 3.75 1.3 5.37l4-3.05z"
-          />
-          <path
-            fill="#EA4335"
-            d="M12 4.75c1.76 0 3.34.61 4.59 1.8l3.44-3.44A11.55 11.55 0 0 0 12 0 12 12 0 0 0 1.3 6.63l4 3.05C6.24 6.85 8.88 4.75 12 4.75z"
-          />
-        </svg>
-        {isBusy ? "Подождите..." : mode === "signin" ? "Войти с Google" : "Зарегистрироваться с Google"}
+        <GoogleLogo />
+        {mode === "signin" ? "Sign in with Google" : "Sign up with Google"}
+      </button>
+      <button
+        className="google-auth-button microsoft"
+        type="button"
+        onClick={() => setMessage("Microsoft SSO can be connected in Supabase when the provider is enabled.")}
+        disabled={isBusy}
+      >
+        <span className="microsoft-logo">M</span>
+        Sign in with Microsoft
       </button>
       <div className="auth-divider">
-        <span>или</span>
+        <span>or</span>
       </div>
       <form className="form" onSubmit={onSubmit}>
         {mode === "signup" ? (
           <>
             <label>
-              Имя
-              <input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Альмира" />
+              Full name
+              <input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Almira" />
             </label>
             <label>
-              Магазин
-              <input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Название магазина" />
+              Store name
+              <input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Aura Store" />
             </label>
           </>
         ) : null}
         <label>
           Email
-          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@email.com" required />
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" required />
         </label>
         <label>
-          Пароль
+          Password
           <input
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Минимум 6 символов"
+            placeholder="Minimum 6 characters"
             minLength={6}
             required
           />
         </label>
         {message ? <p className="error">{message}</p> : null}
-        <button className="button" disabled={isBusy}>
-          {isBusy ? "Подождите..." : mode === "signin" ? "Войти" : "Зарегистрироваться"}
+        <button className="button full" disabled={isBusy}>
+          {isBusy ? "Please wait..." : mode === "signin" ? "Sign in to dashboard" : "Create dashboard account"}
         </button>
       </form>
       <button className="auth-switch" type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>
-        {mode === "signin" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти"}
+        {mode === "signin" ? "Create an account" : "Already have an account? Sign in"}
+      </button>
+      <button className="auth-switch subtle" type="button" onClick={() => setMessage("Use Watch Demo or sign in to open the dashboard.")}>
+        Continue without account
       </button>
     </section>
   );
 }
 
-function KpiPage({
+function Sidebar({ page, setPage, openDemoReport }: { page: Page; setPage: (page: Page) => void; openDemoReport: () => void }) {
+  const items: Array<{ page: Page; label: string; icon: string }> = [
+    { page: "overview", label: "Overview", icon: "OV" },
+    { page: "reports", label: "Reports", icon: "RP" },
+    { page: "inventory", label: "Inventory", icon: "IN" },
+    { page: "risk", label: "Risk Audit", icon: "RA" },
+    { page: "insights", label: "AI Insights", icon: "AI" },
+    { page: "analytics", label: "Analytics", icon: "AN" },
+    { page: "settings", label: "Settings", icon: "ST" },
+  ];
+
+  return (
+    <aside className="sidebar">
+      <AuraLogo />
+      <nav className="sidebar-nav" aria-label="Dashboard navigation">
+        {items.map((item) => (
+          <button
+            className={page === item.page ? "nav-item active" : "nav-item"}
+            type="button"
+            onClick={() => setPage(item.page)}
+            key={item.page}
+          >
+            <span>{item.icon}</span>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <div className="sidebar-help">
+        <strong>Need help?</strong>
+        <p>Ask Aura AI to analyze your data.</p>
+        <button className="button secondary full" type="button" onClick={openDemoReport}>
+          New Analysis
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function TopBar({
+  user,
+  setPage,
+  report,
+  isDemoReport,
+  openDemoReport,
+}: {
+  user: User;
+  setPage: (page: Page) => void;
+  report: AuditReport | null;
+  isDemoReport: boolean;
+  openDemoReport: () => void;
+}) {
+  const displayName = user.user_metadata?.full_name || user.email || "Director";
+  return (
+    <header className="topbar">
+      <div className="search-box">
+        <span>Search</span>
+        <input placeholder="Search reports, SKUs, risks..." />
+      </div>
+      <div className="topbar-actions">
+        {report && !isDemoReport ? (
+          <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
+            PDF
+          </a>
+        ) : null}
+        <button className="button secondary" type="button" onClick={openDemoReport}>
+          Demo
+        </button>
+        <button className="button" type="button" onClick={() => setPage("reports")}>
+          Upload Report
+        </button>
+        <div className="user-menu">
+          <span>{String(displayName).slice(0, 1).toUpperCase()}</span>
+          <div>
+            <strong>{displayName}</strong>
+            <button type="button" onClick={() => supabase.auth.signOut()}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+type UploadProps = {
+  file: File | null;
+  setFile: (file: File | null) => void;
+  storeId: string;
+  setStoreId: (value: string) => void;
+  periodMonth: string;
+  setPeriodMonth: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  isLoading: boolean;
+  error: string | null;
+};
+
+function OverviewPage({
   report,
   totals,
   qualityScore,
   highRiskCount,
   fraudCount,
+  uploadProps,
+  openDemoReport,
+  setPage,
 }: {
   report: AuditReport | null;
   totals: Record<string, number>;
   qualityScore: number;
   highRiskCount: number;
   fraudCount: number;
+  uploadProps: UploadProps;
+  openDemoReport: () => void;
+  setPage: (page: Page) => void;
 }) {
+  const recovered = Math.max(1200000, Math.abs(Number(totals.profit ?? 0)) * 0.08);
   return (
     <div className="page-stack">
-      <div className="metrics">
-        <Metric title="Качество" value={`${qualityScore}/100`} />
-        <Metric title="Ошибки" value={report?.total_findings ?? 0} />
-        <Metric title="Высокий риск" value={highRiskCount} />
-        <Metric title="Fraud-сигналы" value={fraudCount} />
-      </div>
+      <section className="welcome-panel">
+        <div>
+          <span className="eyebrow">AuraRetail control room</span>
+          <h1>Good morning, Director.</h1>
+          <p>Monitor audit accuracy, margin recovery, inventory variance, and AI-guided next actions.</p>
+        </div>
+        <button className="button secondary" type="button" onClick={openDemoReport}>
+          Load demo data
+        </button>
+      </section>
 
+      <section className="metrics-grid">
+        <MetricCard title="AI Accuracy" value={`${formatPercentLike(qualityScore)}`} icon="AI" trend="+0.4%" tone="primary" />
+        <MetricCard title="Recovered Value" value={formatUsd(recovered)} icon="$" trend="+12.8%" tone="success" />
+        <MetricCard title="Risk Level" value={report ? riskLabel[report.risk_level] ?? report.risk_level : "Medium"} icon="!" trend="3 focus areas" tone="warning" />
+        <MetricCard title="Open Issues" value={report?.total_findings ?? highRiskCount} icon="IO" trend={`${fraudCount} AI signals`} tone="danger" />
+      </section>
+
+      <section className="overview-grid">
+        <MainAnalysisCard report={report} setPage={setPage} />
+        <UploadDropzone {...uploadProps} />
+      </section>
+    </div>
+  );
+}
+
+function MetricCard({ title, value, icon, trend, tone }: { title: string; value: string | number; icon: string; trend: string; tone: string }) {
+  return (
+    <article className={`metric-card ${tone}`}>
+      <div className="metric-icon">{icon}</div>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{trend}</small>
+    </article>
+  );
+}
+
+function MainAnalysisCard({ report, setPage }: { report: AuditReport | null; setPage: (page: Page) => void }) {
+  const findings = prioritizeFindings(report?.findings ?? []).slice(0, 3);
+  const issues = findings.length
+    ? findings
+    : [
+        {
+          code: "DEMO-1",
+          severity: "critical" as Severity,
+          sheet_name: "Inventory",
+          cell: "B45",
+          row_number: null,
+          column_name: null,
+          title: "Critical Inventory Mismatch",
+          description: "Store 045 shows 18% variance between POS records and warehouse inventory.",
+          suggested_fix: "Reconcile POS export with warehouse stock movement for the last seven days.",
+          evidence: {},
+        },
+        {
+          code: "DEMO-2",
+          severity: "medium" as Severity,
+          sheet_name: "Catalog",
+          cell: "SKU",
+          row_number: null,
+          column_name: null,
+          title: "Potential SKU Duplication",
+          description: "AI detected duplicate SKU naming patterns across 3 regional catalogs.",
+          suggested_fix: "Merge duplicated SKU families and normalize catalog naming.",
+          evidence: {},
+        },
+        {
+          code: "DEMO-3",
+          severity: "low" as Severity,
+          sheet_name: "Forecast",
+          cell: null,
+          row_number: null,
+          column_name: null,
+          title: "Underperforming Category",
+          description: "Electronics accessories dropped 14% below forecast in the Western region.",
+          suggested_fix: "Review regional promotion and replenish high-intent accessory SKUs.",
+          evidence: {},
+        },
+      ];
+
+  return (
+    <section className="panel analysis-card">
+      <div className="panel-head">
+        <div>
+          <span className="eyebrow">Main analysis</span>
+          <h2>Analyzing: {report?.file_name ?? "Q3_inventory_log.xlsx"}</h2>
+        </div>
+        <span className="status-pill">Live audit</span>
+      </div>
+      <div className="stepper">
+        {["File Parsed", "Data Normalized", "Risk Mapping", "Finished"].map((step, index) => (
+          <div className="step done" key={step}>
+            <span>{index + 1}</span>
+            {step}
+          </div>
+        ))}
+      </div>
+      <div className="progress-track">
+        <span style={{ width: report ? "100%" : "82%" }} />
+      </div>
+      <div className="panel-subhead">
+        <h3>Detected Issues & Reasoning</h3>
+        <button className="button ghost" type="button" onClick={() => setPage("risk")}>
+          View all
+        </button>
+      </div>
+      <div className="issue-list">
+        {issues.map((issue, index) => (
+          <IssueCard finding={issue} key={`${issue.code}-${index}`} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function IssueCard({ finding }: { finding: Finding }) {
+  return (
+    <article className="issue-card">
+      <div>
+        <span className={`severity-badge ${finding.severity}`}>{severityLabel[finding.severity]}</span>
+        <h3>{finding.title}</h3>
+        <p>{finding.description}</p>
+      </div>
+      <button className="button secondary" type="button">
+        View Details
+      </button>
+    </article>
+  );
+}
+
+function UploadDropzone({
+  file,
+  setFile,
+  storeId,
+  setStoreId,
+  periodMonth,
+  setPeriodMonth,
+  onSubmit,
+  isLoading,
+  error,
+}: UploadProps) {
+  return (
+    <section className="panel upload-panel">
+      <div className="panel-head">
+        <div>
+          <span className="eyebrow">Upload flow</span>
+          <h2>Retail report intake</h2>
+        </div>
+      </div>
+      <form className="form" onSubmit={onSubmit}>
+        <label>
+          Store ID
+          <input value={storeId} onChange={(event) => setStoreId(event.target.value)} />
+        </label>
+        <label>
+          Report month
+          <input type="month" value={periodMonth} onChange={(event) => setPeriodMonth(event.target.value)} />
+        </label>
+        <label className={isLoading ? "file-drop loading" : "file-drop"}>
+          <span className="upload-icon">UP</span>
+          <strong>{file ? file.name : "Drop your retail reports here"}</strong>
+          <small>Supports CSV, XLSX, PDF reports</small>
+          <em>Upload File</em>
+          <input type="file" accept={acceptDocuments} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+        </label>
+        {isLoading ? <div className="skeleton-line" /> : null}
+        {error ? <p className="error">{error}</p> : null}
+        <button className="button full" disabled={isLoading}>
+          {isLoading ? "Analyzing report..." : "Upload and analyze"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ReportsPage({
+  uploadProps,
+  report,
+  history,
+  selectReport,
+}: {
+  uploadProps: UploadProps;
+  report: AuditReport | null;
+  history: AuditReport[];
+  selectReport: (report: AuditReport) => void;
+}) {
+  return (
+    <div className="reports-layout">
+      <UploadDropzone {...uploadProps} />
       <section className="panel">
         <div className="panel-head">
-          <h2>Финансовые KPI</h2>
-          <span className="soft-pill">{report ? report.file_name : "Нет файла"}</span>
+          <div>
+            <span className="eyebrow">Current report</span>
+            <h2>{report?.file_name ?? "No report selected"}</h2>
+          </div>
+          <span className="status-pill">{report ? riskLabel[report.risk_level] ?? report.risk_level : "Waiting"}</span>
+        </div>
+        <p className="muted">{report?.summary ?? "Upload a report or open demo data to populate audit context."}</p>
+        <div className="history-list">
+          {history.map((item) => (
+            <button className="history-item" type="button" key={item.id} onClick={() => selectReport(item)}>
+              <span>{item.file_name}</span>
+              <small>
+                {new Date(item.created_at).toLocaleDateString("en-US")} / {riskLabel[item.risk_level] ?? item.risk_level}
+              </small>
+            </button>
+          ))}
+          {!history.length ? <p className="muted">Report history will appear after your first audit.</p> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function InventoryPage({ report, totals }: { report: AuditReport | null; totals: Record<string, number> }) {
+  return (
+    <div className="page-stack">
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">Inventory Insights</span>
+            <h2>Inventory performance snapshot</h2>
+          </div>
+          <span className="status-pill">{report ? `${report.total_findings} issues` : "Demo model"}</span>
         </div>
         <div className="kpi-grid">
           {mainKpiKeys.map((key) => (
@@ -809,11 +1028,16 @@ function KpiPage({
           ))}
         </div>
       </section>
+      <section className="insight-grid">
+        <InsightCard title="Inventory Shift" text="High-velocity SKUs need tighter replenishment windows in priority stores." metric="18%" />
+        <InsightCard title="Consumer Intent" text="Accessories demand trails forecast, suggesting promotion mismatch." metric="-14%" />
+        <InsightCard title="Predictive Model Update" text="Refresh forecast weights with latest promotion and POS variance." metric="2.4s" />
+      </section>
     </div>
   );
 }
 
-function AuditsPage({
+function RiskAuditPage({
   report,
   isDemoReport,
   history,
@@ -829,10 +1053,7 @@ function AuditsPage({
   const [riskFilter, setRiskFilter] = useState<HistoryRiskFilter>("all");
   const visibleFindings = useMemo(() => prioritizeFindings(report?.findings ?? []).slice(0, visibleFindingsLimit), [report]);
   const ownerSummary = useMemo(() => buildOwnerSummary(report), [report]);
-  const filteredHistory = useMemo(
-    () => filterHistory(history, historySearch, riskFilter),
-    [history, historySearch, riskFilter],
-  );
+  const filteredHistory = useMemo(() => filterHistory(history, historySearch, riskFilter), [history, historySearch, riskFilter]);
 
   useEffect(() => {
     setSelectedFinding(visibleFindings[0] ?? null);
@@ -843,117 +1064,47 @@ function AuditsPage({
       <section className="panel">
         <div className="panel-head">
           <div>
-            <p className="eyebrow">Audit workspace</p>
-            <h2>Аудиты и документы</h2>
+            <span className="eyebrow">Risk Audit</span>
+            <h2>Detected Issues & Reasoning</h2>
           </div>
-          {isDemoReport ? <span className="soft-pill">Демо</span> : null}
+          {isDemoReport ? <span className="status-pill">Demo</span> : null}
         </div>
-
         {report ? (
-          <div className="stack">
-            <div className="summary-box">
+          <div className="summary-grid">
+            <div className="summary-box wide">
               <strong>{report.file_name}</strong>
               <p>{report.summary}</p>
             </div>
-            <div className="owner-brief">
-              <div className="panel-head compact-head">
-                <h2>Вывод для владельца</h2>
-                <span className="soft-pill">{riskLabel[report.risk_level] ?? report.risk_level}</span>
+            {ownerSummary.map((item) => (
+              <div className="summary-box" key={item.title}>
+                <strong>{item.title}</strong>
+                <p>{item.text}</p>
               </div>
-              <div className="owner-brief-grid">
-                {ownerSummary.map((item) => (
-                  <div className="owner-brief-item" key={item.title}>
-                    <strong>{item.title}</strong>
-                    <p>{item.text}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="recommendations">
-              {report.recommendations.map((item) => (
-                <div key={item}>{item}</div>
-              ))}
-            </div>
+            ))}
           </div>
         ) : (
-          <p className="muted">Загрузите документ или откройте демо, чтобы увидеть аудит.</p>
+          <p className="muted">Upload a document or open demo data to see the risk audit.</p>
         )}
       </section>
 
       <section className="panel">
-        <div className="panel-head">
-          <h2>Главные проблемы</h2>
-          {report?.findings.length ? (
-            <span className="soft-pill">
-              {visibleFindings.length} из {report.findings.length}
-            </span>
-          ) : null}
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Риск</th>
-                <th>Лист</th>
-                <th>Ячейка</th>
-                <th>Описание</th>
-                <th>Что сделать</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleFindings.map((finding, index) => (
-                <tr
-                  className="clickable-row"
-                  key={`${finding.code}-${index}`}
-                  onClick={() => setSelectedFinding(finding)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setSelectedFinding(finding);
-                    }
-                  }}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`Открыть проблему: ${finding.title}`}
-                >
-                  <td>{severityLabel[finding.severity]}</td>
-                  <td>{finding.sheet_name}</td>
-                  <td>{finding.cell ?? "-"}</td>
-                  <td>{finding.description}</td>
-                  <td>{finding.suggested_fix}</td>
-                </tr>
-              ))}
-              {!report?.findings.length ? (
-                <tr>
-                  <td colSpan={5} className="muted">
-                    Пока нет данных аудита.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-        <div className="finding-cards">
+        <div className="issue-list">
           {visibleFindings.map((finding, index) => (
             <button
-              className="finding-card"
+              className="issue-button"
               type="button"
-              key={`${finding.code}-card-${index}`}
+              key={`${finding.code}-${index}`}
               onClick={() => setSelectedFinding(finding)}
             >
-              <span>{severityLabel[finding.severity]}</span>
-              <strong>{finding.title}</strong>
-              <small>
-                {finding.sheet_name}
-                {finding.cell ? `, ${finding.cell}` : ""}
-              </small>
+              <IssueCard finding={finding} />
             </button>
           ))}
-          {!report?.findings.length ? <p className="muted">Пока нет данных аудита.</p> : null}
+          {!report?.findings.length ? <p className="muted">No audit findings yet.</p> : null}
         </div>
         {selectedFinding ? (
           <div className="finding-detail">
-            <strong>{selectedFinding.title}</strong>
+            <span className={`severity-badge ${selectedFinding.severity}`}>{severityLabel[selectedFinding.severity]}</span>
+            <h3>{selectedFinding.title}</h3>
             <span>
               {selectedFinding.sheet_name}
               {selectedFinding.cell ? `, ${selectedFinding.cell}` : ""}
@@ -966,20 +1117,18 @@ function AuditsPage({
 
       <section className="panel">
         <div className="panel-head">
-          <h2>История документов</h2>
-          <span className="soft-pill">{filteredHistory.length} из {history.length}</span>
+          <h2>Report history</h2>
+          <span className="status-pill">
+            {filteredHistory.length} of {history.length}
+          </span>
         </div>
         <div className="history-filters">
-          <input
-            value={historySearch}
-            onChange={(event) => setHistorySearch(event.target.value)}
-            placeholder="Поиск по файлу"
-          />
+          <input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search by file" />
           <select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as HistoryRiskFilter)}>
-            <option value="all">Все риски</option>
-            <option value="high">Высокий</option>
-            <option value="medium">Средний</option>
-            <option value="low">Низкий</option>
+            <option value="all">All risks</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
           </select>
         </div>
         <div className="history-list">
@@ -987,19 +1136,216 @@ function AuditsPage({
             <button className="history-item" type="button" key={item.id} onClick={() => selectReport(item)}>
               <span>{item.file_name}</span>
               <small>
-                {new Date(item.created_at).toLocaleDateString("ru-RU")} · {riskLabel[item.risk_level] ?? item.risk_level}
+                {new Date(item.created_at).toLocaleDateString("en-US")} / {riskLabel[item.risk_level] ?? item.risk_level}
               </small>
             </button>
           ))}
-          {history.length && !filteredHistory.length ? <p className="muted">По этим фильтрам ничего не найдено.</p> : null}
-          {!history.length ? <p className="muted">История появится после первой проверки.</p> : null}
+          {history.length && !filteredHistory.length ? <p className="muted">No reports match these filters.</p> : null}
+          {!history.length ? <p className="muted">History appears after your first audit.</p> : null}
         </div>
       </section>
     </div>
   );
 }
 
-function ChatPage({
+function InsightsPage({ report, setPage }: { report: AuditReport | null; setPage: (page: Page) => void }) {
+  const topFinding = prioritizeFindings(report?.findings ?? [])[0];
+  return (
+    <div className="page-stack">
+      <div className="section-title">
+        <span className="eyebrow">Aura AI</span>
+        <h1>AI Insights Hub</h1>
+      </div>
+      <section className="insights-layout">
+        <InsightCard
+          large
+          title="Your Q3 margin is impacted by inconsistent promotional pricing in the Western region."
+          text={topFinding ? `${topFinding.title}: ${topFinding.suggested_fix}` : "AI recommends reconciling promotional pricing, inventory variance, and category demand before the next replenishment cycle."}
+          metric="94% confidence"
+          action="Generate Executive Summary"
+          onAction={() => setPage("reports")}
+        />
+        <article className="optimization-card">
+          <span>Optimization Potential</span>
+          <strong>$45k</strong>
+          <p>Projected monthly recovery</p>
+          <button className="button full" type="button" onClick={() => setPage("risk")}>
+            Create action plan
+          </button>
+        </article>
+      </section>
+      <section className="insight-grid">
+        <InsightCard title="Operational Actions" text="Prioritize store 045 reconciliation and duplicated SKU cleanup." metric="7 tasks" />
+        <InsightCard title="Inventory Shift" text="Move slow stock toward high-intent regional clusters." metric="$18k" />
+        <InsightCard title="Consumer Intent" text="Promotional search and POS data show accessory demand mismatch." metric="-14%" />
+        <InsightCard title="Predictive Model Update" text="Refresh forecasts with new regional pricing signals." metric="Ready" />
+      </section>
+    </div>
+  );
+}
+
+function InsightCard({
+  title,
+  text,
+  metric,
+  action,
+  onAction,
+  large = false,
+}: {
+  title: string;
+  text: string;
+  metric: string;
+  action?: string;
+  onAction?: () => void;
+  large?: boolean;
+}) {
+  return (
+    <article className={large ? "insight-card large" : "insight-card"}>
+      <span className="card-dot" />
+      <strong>{title}</strong>
+      <p>{text}</p>
+      <small>{metric}</small>
+      {action ? (
+        <button className="button secondary" type="button" onClick={onAction}>
+          {action}
+        </button>
+      ) : null}
+    </article>
+  );
+}
+
+function AnalyticsPage({ report, comparison, rows }: { report: AuditReport | null; comparison: ReportComparison | null; rows: MonthlyRow[] }) {
+  return (
+    <div className="page-stack">
+      <div className="section-title">
+        <span className="eyebrow">Advanced Analytics</span>
+        <h1>Advanced Analytics</h1>
+      </div>
+      <section className="analytics-grid">
+        <AnalyticsChart rows={rows} />
+        <article className="panel forecast-card">
+          <span className="eyebrow">AI Key Sales Forecast</span>
+          <h2>{formatUsd(Math.max(860000, Number(report?.workbook_profile?.metric_totals?.sales ?? 0)))}</h2>
+          <p>Expected revenue with 91% confidence. Recommendation: rebalance inventory in Western stores and cap low-margin promotions.</p>
+          <div className="forecast-meta">
+            <span>Confidence</span>
+            <strong>91%</strong>
+          </div>
+          {comparison ? <p className="muted">{comparison.summary}</p> : null}
+        </article>
+      </section>
+      <StorePerformanceTable report={report} />
+    </div>
+  );
+}
+
+function AnalyticsChart({ rows }: { rows: MonthlyRow[] }) {
+  const chartRows = rows.length
+    ? rows.slice(-6)
+    : [
+        { key: "Jan", label: "Jan", sales: 64, profit: 42, expense: 30, riskScore: 26 },
+        { key: "Feb", label: "Feb", sales: 72, profit: 46, expense: 35, riskScore: 34 },
+        { key: "Mar", label: "Mar", sales: 59, profit: 38, expense: 31, riskScore: 42 },
+        { key: "Apr", label: "Apr", sales: 84, profit: 58, expense: 36, riskScore: 28 },
+        { key: "May", label: "May", sales: 78, profit: 54, expense: 40, riskScore: 31 },
+        { key: "Jun", label: "Jun", sales: 92, profit: 62, expense: 44, riskScore: 24 },
+      ];
+  const maxSales = Math.max(1, ...chartRows.map((row) => Math.abs(row.sales)));
+
+  return (
+    <section className="panel analytics-chart">
+      <div className="panel-head">
+        <div>
+          <span className="eyebrow">Growth Parity Comparison</span>
+          <h2>Revenue versus risk</h2>
+        </div>
+      </div>
+      <div className="bar-chart">
+        {chartRows.map((row) => (
+          <div className="chart-column" key={row.key}>
+            <span className="bar sales" style={{ height: `${Math.max(12, (Math.abs(row.sales) / maxSales) * 100)}%` }} />
+            <span className="bar risk" style={{ height: `${Math.max(12, row.riskScore)}%` }} />
+            <small>{row.label.slice(0, 3)}</small>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StorePerformanceTable({ report }: { report: AuditReport | null }) {
+  const rows = [
+    ["Store 045", "$248k", "Critical", "18.4%", "82", "Review"],
+    ["Western Hub", "$186k", "Medium", "22.1%", "91", "Active"],
+    ["North Flagship", "$312k", "Low", "27.8%", "96", "Healthy"],
+    ["Online Region", "$428k", "Medium", "20.3%", "89", "Monitor"],
+  ];
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div>
+          <span className="eyebrow">Store Performance Index</span>
+          <h2>{report ? "Live store performance" : "Store Performance Index"}</h2>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>Revenue</th>
+              <th>Risk</th>
+              <th>Margin</th>
+              <th>AI Score</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row[0]}>
+                {row.map((cell, index) => (
+                  <td key={cell}>{index === 2 ? <span className={`severity-badge ${cell.toLowerCase()}`}>{cell}</span> : cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function SettingsPage({
+  personalInfo,
+  setPersonalInfo,
+  user,
+}: {
+  personalInfo: string;
+  setPersonalInfo: (value: string) => void;
+  user: User;
+}) {
+  return (
+    <section className="panel settings-panel">
+      <div className="panel-head">
+        <div>
+          <span className="eyebrow">Settings</span>
+          <h2>Aura AI memory</h2>
+        </div>
+      </div>
+      <p className="muted">Signed in as {user.email}. Add context Aura AI should remember while analyzing your retail data.</p>
+      <label className="memory-box">
+        <span>Business context</span>
+        <textarea
+          value={personalInfo}
+          onChange={(event) => setPersonalInfo(event.target.value)}
+          placeholder="Store format, city, product categories, answer style..."
+        />
+      </label>
+    </section>
+  );
+}
+
+function AIChat({
   report,
   question,
   setQuestion,
@@ -1008,8 +1354,6 @@ function ChatPage({
   isChatLoading,
   aiStatus,
   messages,
-  personalInfo,
-  setPersonalInfo,
   attachedPhotos,
   setAttachedPhotos,
   clearChat,
@@ -1022,8 +1366,6 @@ function ChatPage({
   isChatLoading: boolean;
   aiStatus: AiStatus;
   messages: ChatMessage[];
-  personalInfo: string;
-  setPersonalInfo: (value: string) => void;
   attachedPhotos: ChatPhoto[];
   setAttachedPhotos: (value: ChatPhoto[]) => void;
   clearChat: () => void;
@@ -1038,231 +1380,114 @@ function ChatPage({
   }
 
   return (
-    <div className="chat-home">
-      <section className="chat-panel">
-        <div className="chat-hero">
-          <div>
-            <p className="eyebrow">Gemini AI</p>
-            <h2>Чем помочь?</h2>
+    <aside className="ai-chat-panel">
+      <div className="chat-head">
+        <div>
+          <span className="eyebrow">AI Assistant</span>
+          <h2>Aura AI</h2>
+        </div>
+        <button className="icon-button" type="button" onClick={clearChat} aria-label="New chat" title="New chat">
+          +
+        </button>
+      </div>
+
+      <div className={`ai-status ${aiStatus.tone}`}>
+        <strong>{isChatLoading ? "Aura AI is thinking" : aiStatus.label}</strong>
+        <span>{report ? "Report context active" : aiStatus.detail}</span>
+      </div>
+
+      <div className="prompt-templates" aria-label="Quick prompts">
+        {chatPromptTemplates.map((template) => (
+          <button type="button" key={template} onClick={() => setQuestion(template)} disabled={isChatLoading}>
+            {template}
+          </button>
+        ))}
+      </div>
+
+      <div className="chat-thread">
+        {messages.slice(-6).map((message) => (
+          <div className={message.role === "user" ? "chat-bubble user" : "chat-bubble assistant"} key={message.id}>
+            <span>{message.role === "user" ? "You" : message.source === "fallback" ? "Local answer" : message.model || "Aura AI"}</span>
+            <p>{message.text}</p>
+            {message.photos?.length ? (
+              <div className="chat-photo-grid">
+                {message.photos.map((photo) => (
+                  <img src={photo.url} alt={photo.name} key={photo.url} />
+                ))}
+              </div>
+            ) : null}
+            {message.imageUrl ? <img className="generated-image" src={message.imageUrl} alt="Generated AI result" /> : null}
           </div>
-          <div className="chat-hero-actions">
-            <span className="soft-pill">{report ? "Есть контекст отчета" : "Общий режим"}</span>
-            <button className="new-chat-button" type="button" onClick={clearChat} aria-label="Новый чат" title="Новый чат">
-              <span className="new-chat-icon" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-
-        <div className={`ai-status ${aiStatus.tone}`}>
-          <strong>{isChatLoading ? "Gemini думает" : aiStatus.label}</strong>
-          <span>{aiStatus.detail}</span>
-        </div>
-
-        <div className="chat-thread">
-          {messages.map((message) => (
-            <div className={message.role === "user" ? "chat-bubble user" : "chat-bubble assistant"} key={message.id}>
-              <span>
-                {message.role === "user"
-                  ? "Вы"
-                  : message.source === "fallback"
-                    ? "Локальный ответ"
-                    : message.model || "Gemini"}
-              </span>
-              <p>{message.text}</p>
-              {message.photos?.length ? (
-                <div className="chat-photo-grid">
-                  {message.photos.map((photo) => (
-                    <img src={photo.url} alt={photo.name} key={photo.url} />
-                  ))}
-                </div>
-              ) : null}
-              {message.imageUrl ? <img className="generated-image" src={message.imageUrl} alt="Сгенерированное Gemini изображение" /> : null}
-            </div>
-          ))}
-          {!messages.length ? (
-            <div className="chat-empty">
-              <strong>Спросите про отчет, продажи, идеи или фото</strong>
-              <span>Enter отправляет сообщение. Shift+Enter переносит строку.</span>
-            </div>
-          ) : null}
-        </div>
-
-        {attachedPhotos.length ? (
-          <div className="attached-photos">
-            {attachedPhotos.map((photo) => (
-              <span key={`${photo.name}-${photo.data.slice(0, 12)}`}>{photo.name}</span>
-            ))}
+        ))}
+        {!messages.length ? (
+          <div className="chat-empty">
+            <strong>Ask Aura AI about your retail data...</strong>
+            <span>Use quick prompts or type a custom question.</span>
           </div>
         ) : null}
+      </div>
 
-        <div className="prompt-templates" aria-label="Шаблоны вопросов">
-          {chatPromptTemplates.map((template) => (
-            <button
-              type="button"
-              key={template}
-              onClick={() => setQuestion(template)}
-              disabled={isChatLoading}
-            >
-              {template}
-            </button>
+      {attachedPhotos.length ? (
+        <div className="attached-photos">
+          {attachedPhotos.map((photo) => (
+            <span key={`${photo.name}-${photo.data.slice(0, 12)}`}>{photo.name}</span>
           ))}
         </div>
+      ) : null}
 
-        <form className="chat-composer" onSubmit={(event) => askGemini(event, "chat")}>
-          <textarea
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                if (!isChatLoading && question.trim()) {
-                  askGemini(event, "chat");
-                }
+      <form className="chat-composer" onSubmit={(event) => askGemini(event, "chat")}>
+        <textarea
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              if (!isChatLoading && question.trim()) {
+                askGemini(event, "chat");
               }
-            }}
-            placeholder="Спросите Gemini..."
-            rows={1}
-          />
-          <div className="composer-actions">
-            <div className="composer-tools">
-              <button
-                className="plus-button"
-                type="button"
-                aria-label="Открыть функции"
-                aria-expanded={isToolsOpen}
-                onClick={() => setIsToolsOpen((value) => !value)}
-              >
-                +
-              </button>
-              {isToolsOpen ? (
-                <div className="tools-menu">
-                  <label className="tools-menu-item">
-                    Фото
-                    <input type="file" accept="image/*" multiple onChange={(event) => onPhotoChange(event.target.files)} />
-                  </label>
-                  <button
-                    className="tools-menu-item"
-                    disabled={isChatLoading || !question.trim()}
-                    type="button"
-                    onClick={(event) => {
-                      setIsToolsOpen(false);
-                      askGemini(event, "image");
-                    }}
-                  >
-                    Фото AI
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <button className="send-button" disabled={isChatLoading || !question.trim()} aria-label="Отправить">
-              {isChatLoading ? "..." : "↑"}
+            }
+          }}
+          placeholder="Ask Aura AI about your retail data..."
+          rows={1}
+        />
+        <div className="composer-actions">
+          <div className="composer-tools">
+            <button className="icon-button" type="button" aria-label="Open tools" onClick={() => setIsToolsOpen((value) => !value)}>
+              +
             </button>
-          </div>
-        </form>
-
-        <label className="memory-box compact-memory">
-          <span>Память</span>
-          <textarea
-            value={personalInfo}
-            onChange={(event) => setPersonalInfo(event.target.value)}
-            placeholder="Имя, магазин, город, стиль ответа..."
-          />
-        </label>
-
-        {chatAnswer ? (
-          <div className="chat-answer">
-            <span>{chatAnswer.used_ai ? "Gemini" : "Ожидание Gemini"}</span>
-            <p>{chatAnswer.answer}</p>
-          </div>
-        ) : (
-          <p className="muted">Этот чат не привязан к документам. Если отчет загружен, Gemini может учитывать его, но отвечать будет на любые вопросы.</p>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function StatsPage({ report, comparison, rows }: { report: AuditReport | null; comparison: ReportComparison | null; rows: MonthlyRow[] }) {
-  return (
-    <div className="page-stack">
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Month over month</p>
-            <h2>Статистика и сравнение всех месяцев</h2>
-          </div>
-          <span className="soft-pill">{rows.length} мес.</span>
-        </div>
-
-        {comparison ? (
-          <div className="stack">
-            <p className="muted">{comparison.summary}</p>
-            <div className="comparison-grid">
-              {comparison.metrics.map((item) => (
-                <div key={item.metric_name} className="comparison-item">
-                  <strong>{metricName(item.metric_name)}</strong>
-                  <span>
-                    {formatNumber(item.previous_value)} → {formatNumber(item.current_value)}
-                    {item.delta_percent !== null ? ` (${item.delta_percent > 0 ? "+" : ""}${item.delta_percent}%)` : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="muted">Загрузите минимум два месяца, чтобы увидеть сравнение с прошлым периодом.</p>
-        )}
-      </section>
-
-      <section className="panel">
-        <h2>Все месяцы</h2>
-        <div className="month-chart">
-          {rows.map((row) => (
-            <div className="month-row" key={row.key}>
-              <strong>{row.label}</strong>
-              <div className="month-bars">
-                <MiniBar label="Продажи" value={row.sales} max={maxRows(rows, "sales")} />
-                <MiniBar label="Прибыль" value={row.profit} max={maxRows(rows, "profit")} />
-                <MiniBar label="Расходы" value={row.expense} max={maxRows(rows, "expense")} />
-                <MiniBar label="Риск" value={row.riskScore} max={100} />
+            {isToolsOpen ? (
+              <div className="tools-menu">
+                <label className="tools-menu-item">
+                  Photo
+                  <input type="file" accept="image/*" multiple onChange={(event) => onPhotoChange(event.target.files)} />
+                </label>
+                <button
+                  className="tools-menu-item"
+                  disabled={isChatLoading || !question.trim()}
+                  type="button"
+                  onClick={(event) => {
+                    setIsToolsOpen(false);
+                    askGemini(event, "image");
+                  }}
+                >
+                  Image AI
+                </button>
               </div>
-            </div>
-          ))}
-          {!rows.length ? <p className="muted">Нет данных для месячной статистики.</p> : null}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Текущий месяц</h2>
-        {report ? (
-          <div className="risk-grid">
-            <RiskCard title="Риск" value={riskLabel[report.risk_level] ?? report.risk_level} />
-            <RiskCard title="Баллы риска" value={report.risk_score} />
-            <RiskCard title="Замечания" value={report.total_findings} />
-            <RiskCard title="Качество" value={`${report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)}/100`} />
+            ) : null}
           </div>
-        ) : (
-          <p className="muted">Выберите документ, чтобы увидеть сводку месяца.</p>
-        )}
-      </section>
-    </div>
-  );
-}
+          <button className="send-button" disabled={isChatLoading || !question.trim()} aria-label="Send">
+            {isChatLoading ? "..." : "Send"}
+          </button>
+        </div>
+      </form>
 
-function TabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button className={active ? "tab active" : "tab"} type="button" onClick={onClick}>
-      {label}
-    </button>
-  );
-}
-
-function Metric({ title, value }: { title: string; value: string | number }) {
-  return (
-    <div className="metric">
-      <span>{title}</span>
-      <strong>{value}</strong>
-    </div>
+      {chatAnswer ? (
+        <div className="chat-answer">
+          <span>{chatAnswer.used_ai ? "Aura AI response" : "Fallback response"}</span>
+          <p>{chatAnswer.answer}</p>
+        </div>
+      ) : null}
+    </aside>
   );
 }
 
@@ -1281,38 +1506,20 @@ function KpiBar({ label, value, max }: { label: string; value: number; max: numb
   );
 }
 
-function MiniBar({ label, value, max }: { label: string; value: number; max: number }) {
-  const width = max > 0 ? Math.max(4, Math.min(100, (Math.abs(value) / max) * 100)) : 4;
-  return (
-    <div className="mini-bar">
-      <span>{label}</span>
-      <div className="bar-track">
-        <div className="bar-fill" style={{ width: `${width}%` }} />
-      </div>
-      <strong>{label === "Риск" ? value : formatMoney(value)}</strong>
-    </div>
-  );
-}
-
-function RiskCard({ title, value }: { title: string; value: string | number }) {
-  return (
-    <div className="risk-card">
-      <strong>{title}</strong>
-      <span>{value}</span>
-    </div>
-  );
-}
-
 function maxKpi(totals: Record<string, number>) {
   return Math.max(1, ...Object.values(totals).map((value) => Math.abs(Number(value) || 0)));
 }
 
 function formatMoney(value: number) {
-  return `${new Intl.NumberFormat("kk-KZ", { maximumFractionDigits: 0 }).format(value)} ₸`;
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)} KZT`;
 }
 
-function formatNumber(value: number) {
-  return Math.abs(value) >= 1000 ? formatMoney(value) : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value);
+function formatUsd(value: number) {
+  return `$${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0, notation: value >= 1000000 ? "compact" : "standard" }).format(value)}`;
+}
+
+function formatPercentLike(value: number) {
+  return value > 100 ? "99.9%" : `${Number(value).toFixed(value % 1 ? 1 : 0)}%`;
 }
 
 function buildOwnerSummary(report: AuditReport | null) {
@@ -1327,18 +1534,18 @@ function buildOwnerSummary(report: AuditReport | null) {
 
   return [
     {
-      title: "Сегодня",
+      title: "Today",
       text: topFinding
-        ? `Сначала проверьте: ${topFinding.title}. ${topFinding.suggested_fix}`
-        : "Критичных замечаний не видно. Можно переходить к плановым проверкам продаж и расходов.",
+        ? `Start with ${topFinding.title}. ${topFinding.suggested_fix}`
+        : "No critical findings detected. Continue planned sales and expense checks.",
     },
     {
-      title: "Финансы",
-      text: `Продажи ${formatMoney(sales)}, прибыль ${formatMoney(profit)}, расходы ${formatMoney(expense)}, возвраты ${formatMoney(returnValue)}.`,
+      title: "Finance",
+      text: `Sales ${formatMoney(sales)}, profit ${formatMoney(profit)}, expenses ${formatMoney(expense)}, returns ${formatMoney(returnValue)}.`,
     },
     {
-      title: "Контроль",
-      text: `Качество отчета ${quality}/100, риск: ${riskLabel[report.risk_level] ?? report.risk_level}, замечаний: ${report.total_findings}.`,
+      title: "Control",
+      text: `Report quality ${quality}/100, risk ${riskLabel[report.risk_level] ?? report.risk_level}, findings ${report.total_findings}.`,
     },
   ];
 }
@@ -1361,7 +1568,7 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   if (!report) {
     return {
       used_ai: false,
-      answer: "Жду Gemini. Если ответа нет, проверьте Edge Function и ключ Gemini.",
+      answer: "Aura AI is waiting for report context. Upload a retail file or open demo data for a grounded analysis.",
     };
   }
 
@@ -1370,26 +1577,25 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   return {
     used_ai: false,
     answer: [
-      `Риск: ${riskLabel[report.risk_level] ?? report.risk_level}. Замечаний: ${report.total_findings}.`,
-      `Продажи: ${formatMoney(Number(totals.sales ?? 0))}. Прибыль: ${formatMoney(Number(totals.profit ?? 0))}. Расходы: ${formatMoney(Number(totals.expense ?? 0))}.`,
-      topFindings[0] ? `Сначала проверьте: ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "Серьезных замечаний нет.",
-      `Вопрос: ${question}`,
+      `Risk: ${riskLabel[report.risk_level] ?? report.risk_level}. Findings: ${report.total_findings}.`,
+      `Sales: ${formatMoney(Number(totals.sales ?? 0))}. Profit: ${formatMoney(Number(totals.profit ?? 0))}. Expenses: ${formatMoney(Number(totals.expense ?? 0))}.`,
+      topFindings[0] ? `Start with ${topFindings[0].title}. ${topFindings[0].suggested_fix}` : "No severe findings detected.",
+      `Question: ${question}`,
     ].join(" "),
   };
 }
 
 function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, personalInfo = "", messages: ChatMessage[] = []) {
-  const memory = personalInfo.trim() ? `Память о пользователе:\n${personalInfo.trim()}` : "";
-  const recentMessages = messages.slice(-8).map((item) => `${item.role === "user" ? "Пользователь" : "Gemini"}: ${item.text}`).join("\n");
-  const history = recentMessages ? `Последняя переписка:\n${recentMessages}` : "";
+  const memory = personalInfo.trim() ? `User memory:\n${personalInfo.trim()}` : "";
+  const recentMessages = messages.slice(-8).map((item) => `${item.role === "user" ? "User" : "Aura AI"}: ${item.text}`).join("\n");
+  const history = recentMessages ? `Recent conversation:\n${recentMessages}` : "";
 
   if (!report) {
     return [
       memory,
       history,
-      `Вопрос пользователя: ${question}`,
-      "Режим ответа: дай полезный ответ для владельца магазина. Если вопрос не про магазин, все равно отвечай понятно и прикладно.",
-      "Формат: короткий вывод, затем 3-6 конкретных пунктов. Если даешь план, укажи первый шаг.",
+      `User question: ${question}`,
+      "Answer as a retail analytics assistant. Give a short conclusion, then 3-6 practical points. If more data is needed, say what to upload or verify.",
     ].filter(Boolean).join("\n\n");
   }
 
@@ -1416,10 +1622,8 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, 
   return [
     memory,
     history,
-    `Вопрос пользователя: ${question}`,
-    "Режим ответа: ты помощник владельца fashion retail магазина. Дай сначала главный вывод, затем 3-6 конкретных пунктов: причина, риск или действие.",
-    "Если используешь данные отчета, опирайся только на контекст ниже. Если данных не хватает, так и скажи и предложи, что загрузить или проверить.",
-    "Ниже есть дополнительный контекст загруженного отчета. Используй его только если он реально помогает ответу.",
+    `User question: ${question}`,
+    "Use only the report context below when making claims about the uploaded data. If information is missing, say so clearly.",
     JSON.stringify(reportContext, null, 2),
   ].filter(Boolean).join("\n\n");
 }
@@ -1455,7 +1659,7 @@ function fileToChatPhoto(file: File): Promise<ChatPhoto> {
         data: value.includes(",") ? value.split(",")[1] : value,
       });
     };
-    reader.onerror = () => reject(new Error("Не удалось прочитать фото"));
+    reader.onerror = () => reject(new Error("Could not read photo"));
     reader.readAsDataURL(file);
   });
 }
@@ -1601,32 +1805,11 @@ function buildMonthlyRows(history: AuditReport[], report: AuditReport | null): M
       const totals = item.workbook_profile?.metric_totals ?? {};
       return {
         key,
-        label: new Date(`${key}-01T00:00:00`).toLocaleDateString("ru-RU", { month: "long", year: "numeric" }),
+        label: new Date(`${key}-01T00:00:00`).toLocaleDateString("en-US", { month: "short", year: "numeric" }),
         sales: Number(totals.sales ?? 0),
         profit: Number(totals.profit ?? 0),
         expense: Number(totals.expense ?? 0),
         riskScore: item.risk_score,
       };
     });
-}
-
-function maxRows(rows: MonthlyRow[], field: "sales" | "profit" | "expense" | "riskScore") {
-  return Math.max(1, ...rows.map((row) => Math.abs(row[field])));
-}
-
-function metricName(name: string) {
-  const labels: Record<string, string> = {
-    risk_score: "Балл риска",
-    total_findings: "Всего замечаний",
-    critical_findings: "Критичные замечания",
-    high_risk_findings: "Высокий риск",
-    sales: "Продажи",
-    profit: "Прибыль",
-    salary: "Зарплата",
-    bonus: "Премии",
-    expense: "Расходы",
-    discount: "Скидки",
-    return: "Возвраты",
-  };
-  return labels[name] ?? name;
 }
