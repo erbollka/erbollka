@@ -67,6 +67,48 @@ export async function analyzeDocumentInBrowser(file: File): Promise<AuditReport>
   return buildUnsupportedDocumentReport(file);
 }
 
+export async function extractDocumentContext(file: File): Promise<string> {
+  if (isSpreadsheet(file)) {
+    return extractSpreadsheetContext(file);
+  }
+
+  const text = await tryReadText(file);
+  if (text.trim()) {
+    return trimDocumentContext(text);
+  }
+
+  return "";
+}
+
+async function extractSpreadsheetContext(file: File) {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array", cellFormula: true, cellDates: true });
+  const parts: string[] = [];
+
+  workbook.SheetNames.slice(0, 8).forEach((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "", raw: false }).slice(0, 80);
+    const table = rows
+      .map((row) =>
+        row
+          .slice(0, 18)
+          .map((value) => String(value ?? "").replace(/\s+/g, " ").trim())
+          .join("\t"),
+      )
+      .filter((line) => line.trim())
+      .join("\n");
+    if (table) {
+      parts.push(`Sheet: ${sheetName}\n${table}`);
+    }
+  });
+
+  return trimDocumentContext(parts.join("\n\n"));
+}
+
+function trimDocumentContext(text: string) {
+  return text.replace(/\0/g, "").replace(/[ \t]+\n/g, "\n").trim().slice(0, 60000);
+}
+
 function buildWorkbookProfile(workbook: XLSX.WorkBook): WorkbookProfile {
   const totals: Record<string, number> = Object.fromEntries(Object.keys(metricPatterns).map((key) => [key, 0]));
   const sheets = workbook.SheetNames.map((sheetName) => {

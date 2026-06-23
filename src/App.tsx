@@ -110,6 +110,8 @@ export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode>("signin");
   const [page, setPage] = useState<Page>("overview");
   const [file, setFile] = useState<File | null>(null);
+  const [activeReportFile, setActiveReportFile] = useState<File | null>(null);
+  const [documentContext, setDocumentContext] = useState("");
   const [storeId, setStoreId] = useState("00000000-0000-0000-0000-000000000001");
   const [periodMonth, setPeriodMonth] = useState("2026-06");
   const [report, setReport] = useState<AuditReport | null>(null);
@@ -213,7 +215,11 @@ export default function App() {
     setError(null);
     try {
       const result = await uploadAudit(file, storeId, periodMonth);
+      const { extractDocumentContext } = await import("./lib/clientAudit");
+      const extractedContext = await extractDocumentContext(file).catch(() => "");
       setReport(result);
+      setActiveReportFile(file);
+      setDocumentContext(extractedContext);
       setHistory((items) => [result, ...items.filter((item) => item.id !== result.id)]);
       setChatAnswer(null);
       setPage("risk");
@@ -227,6 +233,8 @@ export default function App() {
   function openDemoReport() {
     setError(null);
     setFile(null);
+    setActiveReportFile(null);
+    setDocumentContext("");
     setReport(demoReport);
     setComparison(demoComparison);
     setChatAnswer(null);
@@ -264,17 +272,21 @@ export default function App() {
     setIsChatLoading(true);
 
     try {
+      const documentFile = activeReportFile && shouldAttachFileToGemini(activeReportFile) ? await fileToAiPart(activeReportFile).catch(() => null) : null;
       const { data, error } = await withTimeout(
         supabase.functions.invoke("ai", {
           body: {
             mode,
             system:
-              "You are Aura AI, a concise retail analytics assistant. Answer in a practical executive style. Start with the conclusion, then provide causes, risks, and next actions. Do not invent numbers.",
-            prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, [...chatMessages, userMessage]),
-            files: currentPhotos.map(({ mimeType, data }) => ({ mimeType, data })),
+              "You are Gemini in AuraRetail. Answer any user question helpfully. If a retail document/report is provided, use it when relevant and cite what you found in it. If the question is unrelated to the document, answer normally. Do not claim you read data that is not present.",
+            prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, [...chatMessages, userMessage], documentContext),
+            files: [
+              ...(documentFile ? [documentFile] : []),
+              ...currentPhotos.map(({ mimeType, data }) => ({ mimeType, data })),
+            ],
           },
         }),
-        mode === "image" ? 30000 : 18000,
+        documentFile || documentContext ? 45000 : mode === "image" ? 30000 : 22000,
       );
       if (error) {
         throw error;
@@ -1585,7 +1597,13 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   };
 }
 
-function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, personalInfo = "", messages: ChatMessage[] = []) {
+function buildGeneralGeminiPrompt(
+  report: AuditReport | null,
+  question: string,
+  personalInfo = "",
+  messages: ChatMessage[] = [],
+  documentContext = "",
+) {
   const memory = personalInfo.trim() ? `User memory:\n${personalInfo.trim()}` : "";
   const recentMessages = messages.slice(-8).map((item) => `${item.role === "user" ? "User" : "Aura AI"}: ${item.text}`).join("\n");
   const history = recentMessages ? `Recent conversation:\n${recentMessages}` : "";
@@ -1595,7 +1613,7 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, 
       memory,
       history,
       `User question: ${question}`,
-      "Answer as a retail analytics assistant. Give a short conclusion, then 3-6 practical points. If more data is needed, say what to upload or verify.",
+      "Answer any question the user asks. If it is about retail, analytics, files, documents, business, or the current app, be practical and specific. If the question is general or unrelated, answer normally.",
     ].filter(Boolean).join("\n\n");
   }
 
@@ -1623,8 +1641,11 @@ function buildGeneralGeminiPrompt(report: AuditReport | null, question: string, 
     memory,
     history,
     `User question: ${question}`,
-    "Use only the report context below when making claims about the uploaded data. If information is missing, say so clearly.",
+    "Answer any user question. Use the uploaded document/report context when it is relevant. If the answer needs facts from the file, rely on the context below and say clearly when something is not present.",
     JSON.stringify(reportContext, null, 2),
+    documentContext
+      ? `Extracted source document content / spreadsheet preview:\n${documentContext}`
+      : "No raw source document text is available. Use the structured audit context if the question is about the uploaded report.",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -1662,6 +1683,36 @@ function fileToChatPhoto(file: File): Promise<ChatPhoto> {
     reader.onerror = () => reject(new Error("Could not read photo"));
     reader.readAsDataURL(file);
   });
+}
+
+function shouldAttachFileToGemini(file: File) {
+  const name = file.name.toLowerCase();
+  if (/\.(xlsx|xls|xlsm|xlsb|csv|tsv|ods)$/.test(name)) return false;
+  return file.type.startsWith("image/") || file.type === "application/pdf" || /\.(pdf|png|jpg|jpeg|webp)$/i.test(name);
+}
+
+function fileToAiPart(file: File): Promise<{ mimeType: string; data: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve({
+        mimeType: file.type || guessFileMimeType(file.name),
+        data: value.includes(",") ? value.split(",")[1] : value,
+      });
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function guessFileMimeType(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "application/octet-stream";
 }
 
 async function loadUserDataFromSupabase(user: User): Promise<{ personalInfo: string | null; messages: ChatMessage[] | null }> {
