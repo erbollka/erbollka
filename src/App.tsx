@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
 import { User } from "@supabase/supabase-js";
 import {
   AuditReport,
@@ -445,15 +445,24 @@ function GoogleLogo() {
 }
 
 function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode) => void }) {
+  const loginRef = useRef<HTMLElement | null>(null);
+
+  function openAuth(targetMode: AuthMode) {
+    setMode(targetMode);
+    window.setTimeout(() => {
+      loginRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  }
+
   return (
     <main className="landing-page">
       <header className="landing-topbar">
         <AuraLogo />
         <div className="landing-auth-actions">
-          <button className="button ghost" type="button" onClick={() => setMode("signin")}>
+          <button className="button ghost" type="button" onClick={() => openAuth("signin")}>
             Sign in
           </button>
-          <button className="button" type="button" onClick={() => setMode("signup")}>
+          <button className="button" type="button" onClick={() => openAuth("signup")}>
             Get Started
           </button>
         </div>
@@ -467,10 +476,10 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
             Upload retail reports, audit inventory performance, detect risks, and get AI-powered recommendations instantly.
           </p>
           <div className="hero-actions">
-            <button className="button button-lg" type="button" onClick={() => setMode("signup")}>
+            <button className="button button-lg" type="button" onClick={() => openAuth("signup")}>
               Get Started
             </button>
-            <button className="button secondary button-lg" type="button" onClick={() => setMode("signin")}>
+            <button className="button secondary button-lg" type="button" onClick={() => openAuth("signin")}>
               Sign in
             </button>
           </div>
@@ -484,7 +493,7 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
         </div>
         <div className="landing-side">
           <ReportPreview />
-          <LoginPage mode={mode} setMode={setMode} />
+          <LoginPage mode={mode} setMode={setMode} refTarget={loginRef} />
         </div>
       </section>
     </main>
@@ -538,9 +547,17 @@ function ValueCard({ title, text }: { title: string; text: string }) {
   );
 }
 
-function LoginPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode) => void }) {
+function LoginPage({
+  mode,
+  setMode,
+  refTarget,
+}: {
+  mode: AuthMode;
+  setMode: (mode: AuthMode) => void;
+  refTarget?: MutableRefObject<HTMLElement | null>;
+}) {
   return (
-    <section className="login-shell">
+    <section className="login-shell" ref={refTarget}>
       <div className="login-gradient">
         <span className="eyebrow">Enterprise intelligence</span>
         <h2>Transforming Retail Intelligence.</h2>
