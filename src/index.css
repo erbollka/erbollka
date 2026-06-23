@@ -89,7 +89,7 @@ button {
   animation: shimmer 1.2s ease-in-out infinite;
 }
 
-.aura-logo {
+.brand-logo {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -97,26 +97,26 @@ button {
   color: var(--ink);
 }
 
-.aura-logo span:last-child {
+.brand-logo span:last-child {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.aura-logo strong {
+.brand-logo strong {
   font-size: 17px;
   font-weight: 800;
   letter-spacing: 0;
   line-height: 1;
 }
 
-.aura-logo small {
+.brand-logo small {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
 }
 
-.aura-mark {
+.brand-mark {
   display: inline-grid;
   place-items: center;
   width: 40px;

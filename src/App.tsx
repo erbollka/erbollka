@@ -75,7 +75,7 @@ const chatPromptTemplates = [
   "Create action plan",
 ];
 const idleAiStatus: AiStatus = {
-  label: "Aura AI ready",
+  label: "AI Assistant ready",
   tone: "idle",
   detail: "Ask about uploaded reports, inventory risk, revenue changes, or executive summaries.",
 };
@@ -254,7 +254,7 @@ export default function App() {
     const localAnswer = buildLocalChatFallback(report, currentQuestion);
     setChatAnswer(localAnswer);
     setAiStatus({
-      label: "Aura AI is thinking",
+      label: "AI Assistant is thinking",
       tone: "thinking",
       detail: report ? "Using report context, memory, and recent messages." : "Using memory and recent messages.",
     });
@@ -267,7 +267,7 @@ export default function App() {
           body: {
             mode,
             system:
-              "You are Gemini in AuraRetail. Answer any user question helpfully. If a retail document/report is provided, use it when relevant and cite what you found in it. If the question is unrelated to the document, answer normally. Do not claim you read data that is not present.",
+              "You are Gemini in Erbollka. Answer any user question helpfully. If a retail document/report is provided, use it when relevant and cite what you found in it. If the question is unrelated to the document, answer normally. Do not claim you read data that is not present.",
             prompt: buildGeneralGeminiPrompt(report, currentQuestion, personalInfo, [...chatMessages, userMessage], documentContext),
             files: [
               ...(documentFile ? [documentFile] : []),
@@ -293,7 +293,7 @@ export default function App() {
         };
         setChatAnswer({ answer, used_ai: true });
         setAiStatus({
-          label: "Aura AI answered",
+          label: "AI Assistant answered",
           tone: "ready",
           detail: `${model}${report ? " with report context" : " in general mode"}${currentPhotos.length ? " and photos" : ""}`,
         });
@@ -314,7 +314,7 @@ export default function App() {
       setAiStatus({
         label: "Local fallback",
         tone: "fallback",
-        detail: "Gemini did not answer in time, so Aura generated a quick report-based fallback.",
+        detail: "Gemini did not answer in time, so the app generated a quick report-based fallback.",
       });
       setChatMessages((items) => [...items, assistantMessage]);
       if (user && isCloudDataReady) {
@@ -350,7 +350,7 @@ export default function App() {
     return (
       <main className="loading-screen">
         <div className="loading-card">
-          <AuraLogo />
+          <BrandLogo />
           <span className="loading-line" />
         </div>
       </main>
@@ -409,12 +409,12 @@ export default function App() {
   );
 }
 
-function AuraLogo() {
+function BrandLogo() {
   return (
-    <div className="aura-logo" aria-label="AuraRetail">
-      <span className="aura-mark">A</span>
+    <div className="brand-logo" aria-label="Erbollka">
+      <span className="brand-mark">E</span>
       <span>
-        <strong>AuraRetail</strong>
+        <strong>Erbollka</strong>
         <small>AI audit analytics</small>
       </span>
     </div>
@@ -457,7 +457,7 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
   return (
     <main className="landing-page">
       <header className="landing-topbar">
-        <AuraLogo />
+        <BrandLogo />
         <div className="landing-auth-actions">
           <button className="button ghost" type="button" onClick={() => openAuth("signin")}>
             Sign in
@@ -664,7 +664,7 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
             </label>
             <label>
               Store name
-              <input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Aura Store" />
+              <input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Store name" />
             </label>
           </>
         ) : null}
@@ -711,7 +711,7 @@ function Sidebar({ page, setPage }: { page: Page; setPage: (page: Page) => void 
 
   return (
     <aside className="sidebar">
-      <AuraLogo />
+      <BrandLogo />
       <nav className="sidebar-nav" aria-label="Dashboard navigation">
         {items.map((item) => (
           <button
@@ -727,7 +727,7 @@ function Sidebar({ page, setPage }: { page: Page; setPage: (page: Page) => void 
       </nav>
       <div className="sidebar-help">
         <strong>Need help?</strong>
-        <p>Ask Aura AI to analyze your data.</p>
+        <p>Ask the AI Assistant to analyze your data.</p>
         <button className="button secondary full" type="button" onClick={() => setPage("reports")}>
           New Analysis
         </button>
@@ -809,7 +809,7 @@ function OverviewPage({
     <div className="page-stack">
       <section className="welcome-panel">
         <div>
-          <span className="eyebrow">AuraRetail control room</span>
+          <span className="eyebrow">Erbollka control room</span>
           <h1>Good morning, Director.</h1>
           <p>Monitor audit accuracy, margin recovery, inventory variance, and AI-guided next actions.</p>
         </div>
@@ -880,13 +880,13 @@ function MainAnalysisCard({ report, setPage }: { report: AuditReport | null; set
         {!report ? (
           <div className="empty-state">
             <strong>No analyzed document yet.</strong>
-            <p>Upload XLSX, CSV, TXT, PDF, or an image. Aura AI will only show findings after reading your actual file.</p>
+            <p>Upload XLSX, CSV, TXT, PDF, or an image. The AI Assistant will only show findings after reading your actual file.</p>
           </div>
         ) : null}
         {report && !findings.length ? (
           <div className="empty-state success">
             <strong>No issues found in the current audit.</strong>
-            <p>Ask Aura AI a question if you want a deeper explanation of the uploaded document.</p>
+            <p>Ask the AI Assistant a question if you want a deeper explanation of the uploaded document.</p>
           </div>
         ) : null}
       </div>
@@ -1021,7 +1021,7 @@ function DocumentContextCard({
   activeReportFile: File | null;
 }) {
   let title = "No source document loaded";
-  let text = "Upload a file to let Aura AI read the document before answering.";
+  let text = "Upload a file to let the AI Assistant read the document before answering.";
   let tone = "idle";
 
   if (report && documentContext) {
@@ -1195,13 +1195,13 @@ function InsightsPage({ report, setPage }: { report: AuditReport | null; setPage
     return (
       <div className="page-stack">
         <div className="section-title">
-          <span className="eyebrow">Aura AI</span>
+          <span className="eyebrow">AI Assistant</span>
           <h1>AI Insights Hub</h1>
         </div>
         <section className="panel">
           <div className="empty-state">
             <strong>No AI insights yet.</strong>
-            <p>Upload a real report first. Aura AI will generate insights from that document instead of showing placeholder business data.</p>
+            <p>Upload a real report first. The AI Assistant will generate insights from that document instead of showing placeholder business data.</p>
             <button className="button" type="button" onClick={() => setPage("reports")}>
               Upload report
             </button>
@@ -1213,14 +1213,14 @@ function InsightsPage({ report, setPage }: { report: AuditReport | null; setPage
   return (
     <div className="page-stack">
       <div className="section-title">
-        <span className="eyebrow">Aura AI</span>
+        <span className="eyebrow">AI Assistant</span>
         <h1>AI Insights Hub</h1>
       </div>
       <section className="insights-layout">
         <InsightCard
           large
           title={topFinding ? topFinding.title : "No critical insight detected in the current report."}
-          text={topFinding ? topFinding.suggested_fix : "Aura AI did not find a high-priority issue in the parsed findings. Ask the chat for a deeper review of the uploaded document."}
+          text={topFinding ? topFinding.suggested_fix : "The AI Assistant did not find a high-priority issue in the parsed findings. Ask the chat for a deeper review of the uploaded document."}
           metric={`${report.total_findings} findings`}
           action="Generate Executive Summary"
           onAction={() => setPage("reports")}
@@ -1288,7 +1288,7 @@ function AnalyticsPage({ report, comparison, rows }: { report: AuditReport | nul
           <h2>{report ? formatUsd(sales) : "-"}</h2>
           <p>
             {report
-              ? "Forecast and recommendations are based on the uploaded report context. Ask Aura AI for a detailed scenario before acting."
+              ? "Forecast and recommendations are based on the uploaded report context. Ask the AI Assistant for a detailed scenario before acting."
               : "Upload at least one report to generate sales forecasts from real data."}
           </p>
           <div className="forecast-meta">
@@ -1408,10 +1408,10 @@ function SettingsPage({
       <div className="panel-head">
         <div>
           <span className="eyebrow">Settings</span>
-          <h2>Aura AI memory</h2>
+          <h2>AI Assistant memory</h2>
         </div>
       </div>
-      <p className="muted">Signed in as {user.email}. Add context Aura AI should remember while analyzing your retail data.</p>
+      <p className="muted">Signed in as {user.email}. Add context the AI Assistant should remember while analyzing your retail data.</p>
       <label className="memory-box">
         <span>Business context</span>
         <textarea
@@ -1467,7 +1467,7 @@ function AIChat({
       <div className="chat-head">
         <div>
           <span className="eyebrow">AI Assistant</span>
-          <h2>Aura AI</h2>
+          <h2>AI Assistant</h2>
         </div>
         <button className="icon-button" type="button" onClick={clearChat} aria-label="New chat" title="New chat">
           +
@@ -1475,7 +1475,7 @@ function AIChat({
       </div>
 
       <div className={`ai-status ${aiStatus.tone}`}>
-        <strong>{isChatLoading ? "Aura AI is thinking" : aiStatus.label}</strong>
+        <strong>{isChatLoading ? "AI Assistant is thinking" : aiStatus.label}</strong>
         <span>{report ? buildChatContextLabel(report, documentContext, activeReportFile) : aiStatus.detail}</span>
       </div>
 
@@ -1490,7 +1490,7 @@ function AIChat({
       <div className="chat-thread">
         {messages.slice(-6).map((message) => (
           <div className={message.role === "user" ? "chat-bubble user" : "chat-bubble assistant"} key={message.id}>
-            <span>{message.role === "user" ? "You" : message.source === "fallback" ? "Local answer" : message.model || "Aura AI"}</span>
+            <span>{message.role === "user" ? "You" : message.source === "fallback" ? "Local answer" : message.model || "AI Assistant"}</span>
             <p>{message.text}</p>
             {message.photos?.length ? (
               <div className="chat-photo-grid">
@@ -1504,7 +1504,7 @@ function AIChat({
         ))}
         {!messages.length ? (
           <div className="chat-empty">
-            <strong>Ask Aura AI about your retail data...</strong>
+            <strong>Ask the AI Assistant about your retail data...</strong>
             <span>Use quick prompts or type a custom question.</span>
           </div>
         ) : null}
@@ -1530,7 +1530,7 @@ function AIChat({
               }
             }
           }}
-          placeholder="Ask Aura AI about your retail data..."
+          placeholder="Ask the AI Assistant about your retail data..."
           rows={1}
         />
         <div className="composer-actions">
@@ -1566,7 +1566,7 @@ function AIChat({
 
       {chatAnswer ? (
         <div className="chat-answer">
-          <span>{chatAnswer.used_ai ? "Aura AI response" : "Fallback response"}</span>
+          <span>{chatAnswer.used_ai ? "AI Assistant response" : "Fallback response"}</span>
           <p>{chatAnswer.answer}</p>
         </div>
       ) : null}
@@ -1698,7 +1698,7 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   if (!report) {
     return {
       used_ai: false,
-      answer: "Aura AI is waiting for report context. Upload a retail file for a grounded analysis, or ask a general question and I will answer normally.",
+      answer: "The AI Assistant is waiting for report context. Upload a retail file for a grounded analysis, or ask a general question and I will answer normally.",
     };
   }
 
@@ -1723,7 +1723,7 @@ function buildGeneralGeminiPrompt(
   documentContext = "",
 ) {
   const memory = personalInfo.trim() ? `User memory:\n${personalInfo.trim()}` : "";
-  const recentMessages = messages.slice(-8).map((item) => `${item.role === "user" ? "User" : "Aura AI"}: ${item.text}`).join("\n");
+  const recentMessages = messages.slice(-8).map((item) => `${item.role === "user" ? "User" : "AI Assistant"}: ${item.text}`).join("\n");
   const history = recentMessages ? `Recent conversation:\n${recentMessages}` : "";
 
   if (!report) {

@@ -20,7 +20,7 @@ def build_report_pdf(report: AuditReport) -> bytes:
         styles[style_name].fontName = font_name
 
     story = [
-        Paragraph("Retail Report AI: отчет проверки", styles["Title"]),
+        Paragraph("Erbollka: отчет проверки", styles["Title"]),
         Paragraph(f"Файл: {report.file_name}", styles["Normal"]),
         Paragraph(f"Риск: {report.risk_level} ({report.risk_score}/100)", styles["Normal"]),
         Spacer(1, 12),

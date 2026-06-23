@@ -7,7 +7,7 @@ from app.core.config import get_settings
 settings = get_settings()
 
 app = FastAPI(
-    title="Retail Report AI API",
+    title="Erbollka API",
     version="0.1.0",
     description="Automated Excel report audit API for retail stores.",
 )
