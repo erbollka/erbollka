@@ -11,7 +11,6 @@ import {
   pdfUrl,
   uploadAudit,
 } from "./lib/api";
-import { demoComparison, demoReport } from "./lib/demoReport";
 import { supabase } from "./lib/supabase";
 import "./index.css";
 
@@ -127,14 +126,13 @@ export default function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isDemoReport = report?.id === demoReport.id;
   const totals = report?.workbook_profile?.metric_totals ?? {};
-  const qualityScore = report?.workbook_profile?.quality_score ?? (report ? Math.max(0, 100 - report.risk_score) : 99.9);
-  const highRiskCount = report?.findings.filter((item) => ["high", "critical"].includes(item.severity)).length ?? 3;
+  const qualityScore = report?.workbook_profile?.quality_score ?? (report ? Math.max(0, 100 - report.risk_score) : null);
+  const highRiskCount = report?.findings.filter((item) => ["high", "critical"].includes(item.severity)).length ?? 0;
   const fraudCount =
     report?.findings.filter((item) =>
       ["SUSPICIOUS_DISCOUNT", "MONTH_END_RETURN_SPIKE", "BONUS_LIMIT_EXCEEDED", "DUPLICATE_ROW"].includes(item.code),
-    ).length ?? 2;
+    ).length ?? 0;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -195,10 +193,6 @@ export default function App() {
       setComparison(null);
       return;
     }
-    if (report.id === demoReport.id) {
-      setComparison(demoComparison);
-      return;
-    }
     fetchComparison(report.id).then(setComparison).catch(() => setComparison(null));
   }, [report]);
 
@@ -228,18 +222,6 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }
-
-  function openDemoReport() {
-    setError(null);
-    setFile(null);
-    setActiveReportFile(null);
-    setDocumentContext("");
-    setReport(demoReport);
-    setComparison(demoComparison);
-    setChatAnswer(null);
-    setHistory((items) => [demoReport, ...items.filter((item) => item.id !== demoReport.id)]);
-    setPage("risk");
   }
 
   async function askGemini(event: { preventDefault: () => void }, mode: "chat" | "image" = "chat") {
@@ -374,9 +356,9 @@ export default function App() {
 
   return (
     <main className="dashboard-shell">
-      <Sidebar page={page} setPage={setPage} openDemoReport={openDemoReport} />
+      <Sidebar page={page} setPage={setPage} />
       <section className="dashboard-main">
-        <TopBar user={user} setPage={setPage} report={report} isDemoReport={isDemoReport} openDemoReport={openDemoReport} />
+        <TopBar user={user} setPage={setPage} report={report} />
         <div className="dashboard-content">
           {page === "overview" ? (
             <OverviewPage
@@ -386,14 +368,13 @@ export default function App() {
               highRiskCount={highRiskCount}
               fraudCount={fraudCount}
               uploadProps={uploadProps}
-              openDemoReport={openDemoReport}
               setPage={setPage}
             />
           ) : null}
           {page === "reports" ? <ReportsPage uploadProps={uploadProps} report={report} history={history} selectReport={setReport} /> : null}
           {page === "inventory" ? <InventoryPage report={report} totals={totals} /> : null}
           {page === "risk" ? (
-            <RiskAuditPage report={report} isDemoReport={isDemoReport} history={history} selectReport={setReport} />
+            <RiskAuditPage report={report} history={history} selectReport={setReport} />
           ) : null}
           {page === "insights" ? <InsightsPage report={report} setPage={setPage} /> : null}
           {page === "analytics" ? <AnalyticsPage report={report} comparison={comparison} rows={monthlyRows} /> : null}
@@ -481,7 +462,7 @@ function LandingPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMo
               Get Started
             </button>
             <button className="button secondary button-lg" type="button" onClick={() => setMode("signin")}>
-              Watch Demo
+              Sign in
             </button>
           </div>
           <UploadMockup />
@@ -518,21 +499,21 @@ function ReportPreview() {
   return (
     <div className="report-preview">
       <div className="preview-head">
-        <span>Q3 inventory audit</span>
-        <strong>99.9%</strong>
+        <span>Upload preview</span>
+        <strong>Ready</strong>
       </div>
       <div className="mock-chart">
-        {[54, 78, 46, 84, 62, 91].map((height, index) => (
+        {[34, 48, 28, 58, 42, 64].map((height, index) => (
           <span style={{ height: `${height}%` }} key={index} />
         ))}
       </div>
       <div className="preview-row">
-        <span>Recovered value</span>
-        <strong>$1.2M</strong>
+        <span>Data source</span>
+        <strong>Your file</strong>
       </div>
       <div className="preview-row warning">
-        <span>Risk level</span>
-        <strong>Medium</strong>
+        <span>AI status</span>
+        <strong>Waiting</strong>
       </div>
     </div>
   );
@@ -556,8 +537,8 @@ function LoginPage({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
         <h2>Transforming Retail Intelligence.</h2>
         <p>Audit faster, recover revenue, and make every store decision data-driven.</p>
         <div className="login-stats">
-          <strong>99.9% AI accuracy</strong>
-          <strong>2.4s avg analysis</strong>
+          <strong>Document-aware chat</strong>
+          <strong>Real file analysis</strong>
         </div>
       </div>
       <AuthPanel mode={mode} setMode={setMode} />
@@ -684,14 +665,14 @@ function AuthPanel({ mode, setMode }: { mode: AuthMode; setMode: (mode: AuthMode
       <button className="auth-switch" type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>
         {mode === "signin" ? "Create an account" : "Already have an account? Sign in"}
       </button>
-      <button className="auth-switch subtle" type="button" onClick={() => setMessage("Use Watch Demo or sign in to open the dashboard.")}>
+      <button className="auth-switch subtle" type="button" onClick={() => setMessage("Sign in to open the dashboard and upload real reports.")}>
         Continue without account
       </button>
     </section>
   );
 }
 
-function Sidebar({ page, setPage, openDemoReport }: { page: Page; setPage: (page: Page) => void; openDemoReport: () => void }) {
+function Sidebar({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
   const items: Array<{ page: Page; label: string; icon: string }> = [
     { page: "overview", label: "Overview", icon: "OV" },
     { page: "reports", label: "Reports", icon: "RP" },
@@ -721,7 +702,7 @@ function Sidebar({ page, setPage, openDemoReport }: { page: Page; setPage: (page
       <div className="sidebar-help">
         <strong>Need help?</strong>
         <p>Ask Aura AI to analyze your data.</p>
-        <button className="button secondary full" type="button" onClick={openDemoReport}>
+        <button className="button secondary full" type="button" onClick={() => setPage("reports")}>
           New Analysis
         </button>
       </div>
@@ -733,14 +714,10 @@ function TopBar({
   user,
   setPage,
   report,
-  isDemoReport,
-  openDemoReport,
 }: {
   user: User;
   setPage: (page: Page) => void;
   report: AuditReport | null;
-  isDemoReport: boolean;
-  openDemoReport: () => void;
 }) {
   const displayName = user.user_metadata?.full_name || user.email || "Director";
   return (
@@ -750,14 +727,11 @@ function TopBar({
         <input placeholder="Search reports, SKUs, risks..." />
       </div>
       <div className="topbar-actions">
-        {report && !isDemoReport ? (
+        {report ? (
           <a className="button secondary" href={pdfUrl(report.id)} target="_blank" rel="noreferrer">
             PDF
           </a>
         ) : null}
-        <button className="button secondary" type="button" onClick={openDemoReport}>
-          Demo
-        </button>
         <button className="button" type="button" onClick={() => setPage("reports")}>
           Upload Report
         </button>
@@ -794,19 +768,17 @@ function OverviewPage({
   highRiskCount,
   fraudCount,
   uploadProps,
-  openDemoReport,
   setPage,
 }: {
   report: AuditReport | null;
   totals: Record<string, number>;
-  qualityScore: number;
+  qualityScore: number | null;
   highRiskCount: number;
   fraudCount: number;
   uploadProps: UploadProps;
-  openDemoReport: () => void;
   setPage: (page: Page) => void;
 }) {
-  const recovered = Math.max(1200000, Math.abs(Number(totals.profit ?? 0)) * 0.08);
+  const recovered = report ? Math.abs(Number(totals.profit ?? 0)) * 0.08 : null;
   return (
     <div className="page-stack">
       <section className="welcome-panel">
@@ -815,16 +787,16 @@ function OverviewPage({
           <h1>Good morning, Director.</h1>
           <p>Monitor audit accuracy, margin recovery, inventory variance, and AI-guided next actions.</p>
         </div>
-        <button className="button secondary" type="button" onClick={openDemoReport}>
-          Load demo data
+        <button className="button secondary" type="button" onClick={() => setPage("reports")}>
+          Upload report
         </button>
       </section>
 
       <section className="metrics-grid">
-        <MetricCard title="AI Accuracy" value={`${formatPercentLike(qualityScore)}`} icon="AI" trend="+0.4%" tone="primary" />
-        <MetricCard title="Recovered Value" value={formatUsd(recovered)} icon="$" trend="+12.8%" tone="success" />
-        <MetricCard title="Risk Level" value={report ? riskLabel[report.risk_level] ?? report.risk_level : "Medium"} icon="!" trend="3 focus areas" tone="warning" />
-        <MetricCard title="Open Issues" value={report?.total_findings ?? highRiskCount} icon="IO" trend={`${fraudCount} AI signals`} tone="danger" />
+        <MetricCard title="AI Accuracy" value={qualityScore === null ? "-" : formatPercentLike(qualityScore)} icon="AI" trend={report ? "From uploaded report" : "Waiting for upload"} tone="primary" />
+        <MetricCard title="Recovered Value" value={recovered === null ? "-" : formatUsd(recovered)} icon="$" trend={report ? "Estimated from report data" : "No file analyzed"} tone="success" />
+        <MetricCard title="Risk Level" value={report ? riskLabel[report.risk_level] ?? report.risk_level : "-"} icon="!" trend={report ? `${highRiskCount} high-risk items` : "Waiting for upload"} tone="warning" />
+        <MetricCard title="Open Issues" value={report?.total_findings ?? "-"} icon="IO" trend={report ? `${fraudCount} audit signals` : "No report loaded"} tone="danger" />
       </section>
 
       <section className="overview-grid">
@@ -848,66 +820,26 @@ function MetricCard({ title, value, icon, trend, tone }: { title: string; value:
 
 function MainAnalysisCard({ report, setPage }: { report: AuditReport | null; setPage: (page: Page) => void }) {
   const findings = prioritizeFindings(report?.findings ?? []).slice(0, 3);
-  const issues = findings.length
-    ? findings
-    : [
-        {
-          code: "DEMO-1",
-          severity: "critical" as Severity,
-          sheet_name: "Inventory",
-          cell: "B45",
-          row_number: null,
-          column_name: null,
-          title: "Critical Inventory Mismatch",
-          description: "Store 045 shows 18% variance between POS records and warehouse inventory.",
-          suggested_fix: "Reconcile POS export with warehouse stock movement for the last seven days.",
-          evidence: {},
-        },
-        {
-          code: "DEMO-2",
-          severity: "medium" as Severity,
-          sheet_name: "Catalog",
-          cell: "SKU",
-          row_number: null,
-          column_name: null,
-          title: "Potential SKU Duplication",
-          description: "AI detected duplicate SKU naming patterns across 3 regional catalogs.",
-          suggested_fix: "Merge duplicated SKU families and normalize catalog naming.",
-          evidence: {},
-        },
-        {
-          code: "DEMO-3",
-          severity: "low" as Severity,
-          sheet_name: "Forecast",
-          cell: null,
-          row_number: null,
-          column_name: null,
-          title: "Underperforming Category",
-          description: "Electronics accessories dropped 14% below forecast in the Western region.",
-          suggested_fix: "Review regional promotion and replenish high-intent accessory SKUs.",
-          evidence: {},
-        },
-      ];
 
   return (
     <section className="panel analysis-card">
       <div className="panel-head">
         <div>
           <span className="eyebrow">Main analysis</span>
-          <h2>Analyzing: {report?.file_name ?? "Q3_inventory_log.xlsx"}</h2>
+          <h2>{report ? `Analyzing: ${report.file_name}` : "Upload a report to start analysis"}</h2>
         </div>
-        <span className="status-pill">Live audit</span>
+        <span className="status-pill">{report ? "Live audit" : "No file loaded"}</span>
       </div>
       <div className="stepper">
         {["File Parsed", "Data Normalized", "Risk Mapping", "Finished"].map((step, index) => (
-          <div className="step done" key={step}>
+          <div className={report ? "step done" : "step pending"} key={step}>
             <span>{index + 1}</span>
             {step}
           </div>
         ))}
       </div>
       <div className="progress-track">
-        <span style={{ width: report ? "100%" : "82%" }} />
+        <span style={{ width: report ? "100%" : "0%" }} />
       </div>
       <div className="panel-subhead">
         <h3>Detected Issues & Reasoning</h3>
@@ -916,9 +848,21 @@ function MainAnalysisCard({ report, setPage }: { report: AuditReport | null; set
         </button>
       </div>
       <div className="issue-list">
-        {issues.map((issue, index) => (
+        {findings.map((issue, index) => (
           <IssueCard finding={issue} key={`${issue.code}-${index}`} />
         ))}
+        {!report ? (
+          <div className="empty-state">
+            <strong>No analyzed document yet.</strong>
+            <p>Upload XLSX, CSV, TXT, PDF, or an image. Aura AI will only show findings after reading your actual file.</p>
+          </div>
+        ) : null}
+        {report && !findings.length ? (
+          <div className="empty-state success">
+            <strong>No issues found in the current audit.</strong>
+            <p>Ask Aura AI a question if you want a deeper explanation of the uploaded document.</p>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -1006,7 +950,7 @@ function ReportsPage({
           </div>
           <span className="status-pill">{report ? riskLabel[report.risk_level] ?? report.risk_level : "Waiting"}</span>
         </div>
-        <p className="muted">{report?.summary ?? "Upload a report or open demo data to populate audit context."}</p>
+        <p className="muted">{report?.summary ?? "Upload a report to populate audit context."}</p>
         <div className="history-list">
           {history.map((item) => (
             <button className="history-item" type="button" key={item.id} onClick={() => selectReport(item)}>
@@ -1032,31 +976,38 @@ function InventoryPage({ report, totals }: { report: AuditReport | null; totals:
             <span className="eyebrow">Inventory Insights</span>
             <h2>Inventory performance snapshot</h2>
           </div>
-          <span className="status-pill">{report ? `${report.total_findings} issues` : "Demo model"}</span>
+          <span className="status-pill">{report ? `${report.total_findings} issues` : "No file loaded"}</span>
         </div>
-        <div className="kpi-grid">
-          {mainKpiKeys.map((key) => (
-            <KpiBar key={key} label={kpiLabels[key]} value={Number(totals[key] ?? 0)} max={maxKpi(totals)} />
-          ))}
-        </div>
+        {report ? (
+          <div className="kpi-grid">
+            {mainKpiKeys.map((key) => (
+              <KpiBar key={key} label={kpiLabels[key]} value={Number(totals[key] ?? 0)} max={maxKpi(totals)} />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <strong>No inventory data yet.</strong>
+            <p>Upload a spreadsheet or document. Inventory insights will be generated only from your parsed file.</p>
+          </div>
+        )}
       </section>
-      <section className="insight-grid">
-        <InsightCard title="Inventory Shift" text="High-velocity SKUs need tighter replenishment windows in priority stores." metric="18%" />
-        <InsightCard title="Consumer Intent" text="Accessories demand trails forecast, suggesting promotion mismatch." metric="-14%" />
-        <InsightCard title="Predictive Model Update" text="Refresh forecast weights with latest promotion and POS variance." metric="2.4s" />
-      </section>
+      {report ? (
+        <section className="insight-grid">
+          <InsightCard title="Report Totals" text="Computed from the uploaded document metrics." metric={formatMoney(Number(totals.sales ?? 0))} />
+          <InsightCard title="Risk Signals" text="Prioritized from audit findings in this file." metric={`${report.total_findings} issues`} />
+          <InsightCard title="Quality Score" text="Calculated from detected inconsistencies." metric={`${report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)}/100`} />
+        </section>
+      ) : null}
     </div>
   );
 }
 
 function RiskAuditPage({
   report,
-  isDemoReport,
   history,
   selectReport,
 }: {
   report: AuditReport | null;
-  isDemoReport: boolean;
   history: AuditReport[];
   selectReport: (report: AuditReport) => void;
 }) {
@@ -1079,7 +1030,6 @@ function RiskAuditPage({
             <span className="eyebrow">Risk Audit</span>
             <h2>Detected Issues & Reasoning</h2>
           </div>
-          {isDemoReport ? <span className="status-pill">Demo</span> : null}
         </div>
         {report ? (
           <div className="summary-grid">
@@ -1095,7 +1045,7 @@ function RiskAuditPage({
             ))}
           </div>
         ) : (
-          <p className="muted">Upload a document or open demo data to see the risk audit.</p>
+          <p className="muted">Upload a document to see the risk audit.</p>
         )}
       </section>
 
@@ -1162,6 +1112,25 @@ function RiskAuditPage({
 
 function InsightsPage({ report, setPage }: { report: AuditReport | null; setPage: (page: Page) => void }) {
   const topFinding = prioritizeFindings(report?.findings ?? [])[0];
+  if (!report) {
+    return (
+      <div className="page-stack">
+        <div className="section-title">
+          <span className="eyebrow">Aura AI</span>
+          <h1>AI Insights Hub</h1>
+        </div>
+        <section className="panel">
+          <div className="empty-state">
+            <strong>No AI insights yet.</strong>
+            <p>Upload a real report first. Aura AI will generate insights from that document instead of showing placeholder business data.</p>
+            <button className="button" type="button" onClick={() => setPage("reports")}>
+              Upload report
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
   return (
     <div className="page-stack">
       <div className="section-title">
@@ -1171,26 +1140,25 @@ function InsightsPage({ report, setPage }: { report: AuditReport | null; setPage
       <section className="insights-layout">
         <InsightCard
           large
-          title="Your Q3 margin is impacted by inconsistent promotional pricing in the Western region."
-          text={topFinding ? `${topFinding.title}: ${topFinding.suggested_fix}` : "AI recommends reconciling promotional pricing, inventory variance, and category demand before the next replenishment cycle."}
-          metric="94% confidence"
+          title={topFinding ? topFinding.title : "No critical insight detected in the current report."}
+          text={topFinding ? topFinding.suggested_fix : "Aura AI did not find a high-priority issue in the parsed findings. Ask the chat for a deeper review of the uploaded document."}
+          metric={`${report.total_findings} findings`}
           action="Generate Executive Summary"
           onAction={() => setPage("reports")}
         />
         <article className="optimization-card">
           <span>Optimization Potential</span>
-          <strong>$45k</strong>
-          <p>Projected monthly recovery</p>
+          <strong>{formatMoney(Math.abs(Number(report.workbook_profile?.metric_totals?.profit ?? 0)) * 0.08)}</strong>
+          <p>Estimated from current report profit, not a guaranteed recovery.</p>
           <button className="button full" type="button" onClick={() => setPage("risk")}>
             Create action plan
           </button>
         </article>
       </section>
       <section className="insight-grid">
-        <InsightCard title="Operational Actions" text="Prioritize store 045 reconciliation and duplicated SKU cleanup." metric="7 tasks" />
-        <InsightCard title="Inventory Shift" text="Move slow stock toward high-intent regional clusters." metric="$18k" />
-        <InsightCard title="Consumer Intent" text="Promotional search and POS data show accessory demand mismatch." metric="-14%" />
-        <InsightCard title="Predictive Model Update" text="Refresh forecasts with new regional pricing signals." metric="Ready" />
+        {buildReportInsightCards(report).map((item) => (
+          <InsightCard title={item.title} text={item.text} metric={item.metric} key={item.title} />
+        ))}
       </section>
     </div>
   );
@@ -1227,6 +1195,7 @@ function InsightCard({
 }
 
 function AnalyticsPage({ report, comparison, rows }: { report: AuditReport | null; comparison: ReportComparison | null; rows: MonthlyRow[] }) {
+  const sales = Number(report?.workbook_profile?.metric_totals?.sales ?? 0);
   return (
     <div className="page-stack">
       <div className="section-title">
@@ -1237,11 +1206,15 @@ function AnalyticsPage({ report, comparison, rows }: { report: AuditReport | nul
         <AnalyticsChart rows={rows} />
         <article className="panel forecast-card">
           <span className="eyebrow">AI Key Sales Forecast</span>
-          <h2>{formatUsd(Math.max(860000, Number(report?.workbook_profile?.metric_totals?.sales ?? 0)))}</h2>
-          <p>Expected revenue with 91% confidence. Recommendation: rebalance inventory in Western stores and cap low-margin promotions.</p>
+          <h2>{report ? formatUsd(sales) : "-"}</h2>
+          <p>
+            {report
+              ? "Forecast and recommendations are based on the uploaded report context. Ask Aura AI for a detailed scenario before acting."
+              : "Upload at least one report to generate sales forecasts from real data."}
+          </p>
           <div className="forecast-meta">
             <span>Confidence</span>
-            <strong>91%</strong>
+            <strong>{report ? "Report-based" : "-"}</strong>
           </div>
           {comparison ? <p className="muted">{comparison.summary}</p> : null}
         </article>
@@ -1252,16 +1225,7 @@ function AnalyticsPage({ report, comparison, rows }: { report: AuditReport | nul
 }
 
 function AnalyticsChart({ rows }: { rows: MonthlyRow[] }) {
-  const chartRows = rows.length
-    ? rows.slice(-6)
-    : [
-        { key: "Jan", label: "Jan", sales: 64, profit: 42, expense: 30, riskScore: 26 },
-        { key: "Feb", label: "Feb", sales: 72, profit: 46, expense: 35, riskScore: 34 },
-        { key: "Mar", label: "Mar", sales: 59, profit: 38, expense: 31, riskScore: 42 },
-        { key: "Apr", label: "Apr", sales: 84, profit: 58, expense: 36, riskScore: 28 },
-        { key: "May", label: "May", sales: 78, profit: 54, expense: 40, riskScore: 31 },
-        { key: "Jun", label: "Jun", sales: 92, profit: 62, expense: 44, riskScore: 24 },
-      ];
+  const chartRows = rows.slice(-6);
   const maxSales = Math.max(1, ...chartRows.map((row) => Math.abs(row.sales)));
 
   return (
@@ -1272,26 +1236,40 @@ function AnalyticsChart({ rows }: { rows: MonthlyRow[] }) {
           <h2>Revenue versus risk</h2>
         </div>
       </div>
-      <div className="bar-chart">
-        {chartRows.map((row) => (
-          <div className="chart-column" key={row.key}>
-            <span className="bar sales" style={{ height: `${Math.max(12, (Math.abs(row.sales) / maxSales) * 100)}%` }} />
-            <span className="bar risk" style={{ height: `${Math.max(12, row.riskScore)}%` }} />
-            <small>{row.label.slice(0, 3)}</small>
-          </div>
-        ))}
-      </div>
+      {chartRows.length ? (
+        <div className="bar-chart">
+          {chartRows.map((row) => (
+            <div className="chart-column" key={row.key}>
+              <span className="bar sales" style={{ height: `${Math.max(12, (Math.abs(row.sales) / maxSales) * 100)}%` }} />
+              <span className="bar risk" style={{ height: `${Math.max(12, row.riskScore)}%` }} />
+              <small>{row.label.slice(0, 3)}</small>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state chart-empty">
+          <strong>No analytics data yet.</strong>
+          <p>Upload reports and the chart will be built from your real monthly history.</p>
+        </div>
+      )}
     </section>
   );
 }
 
 function StorePerformanceTable({ report }: { report: AuditReport | null }) {
-  const rows = [
-    ["Store 045", "$248k", "Critical", "18.4%", "82", "Review"],
-    ["Western Hub", "$186k", "Medium", "22.1%", "91", "Active"],
-    ["North Flagship", "$312k", "Low", "27.8%", "96", "Healthy"],
-    ["Online Region", "$428k", "Medium", "20.3%", "89", "Monitor"],
-  ];
+  const totals = report?.workbook_profile?.metric_totals ?? {};
+  const rows = report
+    ? [
+        [
+          report.file_name,
+          formatMoney(Number(totals.sales ?? 0)),
+          riskLabel[report.risk_level] ?? report.risk_level,
+          formatMoney(Number(totals.profit ?? 0)),
+          String(report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score)),
+          report.total_findings ? "Review" : "Clear",
+        ],
+      ]
+    : [];
   return (
     <section className="panel">
       <div className="panel-head">
@@ -1320,6 +1298,16 @@ function StorePerformanceTable({ report }: { report: AuditReport | null }) {
                 ))}
               </tr>
             ))}
+            {!rows.length ? (
+              <tr>
+                <td colSpan={6}>
+                  <div className="empty-state table-empty">
+                    <strong>No store performance data yet.</strong>
+                    <p>Upload a report to populate this table from real parsed values.</p>
+                  </div>
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -1531,7 +1519,8 @@ function formatUsd(value: number) {
 }
 
 function formatPercentLike(value: number) {
-  return value > 100 ? "99.9%" : `${Number(value).toFixed(value % 1 ? 1 : 0)}%`;
+  const normalized = Math.max(0, Math.min(100, value));
+  return `${Number(normalized).toFixed(normalized % 1 ? 1 : 0)}%`;
 }
 
 function buildOwnerSummary(report: AuditReport | null) {
@@ -1562,6 +1551,36 @@ function buildOwnerSummary(report: AuditReport | null) {
   ];
 }
 
+function buildReportInsightCards(report: AuditReport) {
+  const totals = report.workbook_profile?.metric_totals ?? {};
+  const quality = report.workbook_profile?.quality_score ?? Math.max(0, 100 - report.risk_score);
+  const highRisk = report.findings.filter((item) => ["high", "critical"].includes(item.severity)).length;
+  const topFinding = prioritizeFindings(report.findings)[0];
+
+  return [
+    {
+      title: "Operational Actions",
+      text: topFinding ? topFinding.suggested_fix : "No urgent action was detected in the parsed findings.",
+      metric: topFinding ? severityLabel[topFinding.severity] : "Clear",
+    },
+    {
+      title: "Financial Totals",
+      text: "Computed from metric columns detected in the uploaded report.",
+      metric: formatMoney(Number(totals.sales ?? 0)),
+    },
+    {
+      title: "Risk Audit",
+      text: "High-priority findings found in this document.",
+      metric: `${highRisk} high risk`,
+    },
+    {
+      title: "Data Quality",
+      text: "Quality score based on parsed structure and detected inconsistencies.",
+      metric: `${quality}/100`,
+    },
+  ];
+}
+
 function filterHistory(history: AuditReport[], search: string, riskFilter: HistoryRiskFilter) {
   const query = search.trim().toLowerCase();
   return history.filter((item) => {
@@ -1580,7 +1599,7 @@ function buildLocalChatFallback(report: AuditReport | null, question: string): C
   if (!report) {
     return {
       used_ai: false,
-      answer: "Aura AI is waiting for report context. Upload a retail file or open demo data for a grounded analysis.",
+      answer: "Aura AI is waiting for report context. Upload a retail file for a grounded analysis, or ask a general question and I will answer normally.",
     };
   }
 

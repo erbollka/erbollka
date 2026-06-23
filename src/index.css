@@ -1024,6 +1024,40 @@ button {
   gap: 12px;
 }
 
+.empty-state {
+  display: grid;
+  gap: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  color: var(--muted);
+  background: linear-gradient(180deg, #ffffff, #f8faff);
+}
+
+.empty-state strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.empty-state p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.empty-state.success {
+  border-color: rgb(16 185 129 / 28%);
+  background: #ecfdf5;
+}
+
+.chart-empty {
+  min-height: 260px;
+  align-content: center;
+}
+
+.table-empty {
+  margin: 8px 0;
+}
+
 .issue-card {
   display: flex;
   align-items: center;
